@@ -28,15 +28,15 @@ To keep speed high and behavior consistent, /alin-dev performs Rules Discovery a
   - If both are missing, fall back to a built‑in minimal hard‑rules set.
 - Cache directory: `./.alin/rules-cache/`
   - `rules-fingerprint.txt`: path, mtime, size, sha256 (or prefix) of the active rules source.
-  - `rules-compact.md`: compact, executable hard rules extracted from the source for all sub‑agents to reference.
+  - `rules-full.md`: full, executable rules (uncompressed) extracted from the source for all sub‑agents to reference. This preserves the complete content rather than a compacted subset.
 - Fast path:
-  - If the fingerprint has not changed, load `rules-compact.md` directly — no re‑parsing of the long document.
+  - If the fingerprint has not changed, load `rules-full.md` directly — no re‑parsing of the source document.
   - If the fingerprint changed or this is the first run, re‑extract and refresh the cache.
 - Light compliance gate:
   - Create `./.alin/specs/{feature_name}/agents-compliance.md` (checklist covering Task Brief completeness, compatibility strategy, rollback plan, complexity control, and dependency justification).
   - If the checklist is incomplete, stay in requirements confirmation to fill gaps; proceed to implementation only after it’s complete.
 
-All sub‑agents must honor the hard rules from `rules-compact.md` and echo “applied rule points” in their outputs (e.g., no breaking existing APIs, avoid >3 levels of nesting, lock scope and acceptance first, simplify data structures, avoid new deps unless necessary).
+All sub‑agents must honor the hard rules from `rules-full.md` and echo “applied rule points” in their outputs (e.g., no breaking existing APIs, avoid >3 levels of nesting, lock scope and acceptance first, simplify data structures, avoid new deps unless necessary).
 
 ## Initial Repository Scanning Phase
 
@@ -83,7 +83,7 @@ Consider repo context when clarifying requirements: patterns, stack constraints,
 ### 4. Interactive Clarification Loop (with light compliance gate)
 - Gate: Continue until score ≥ 90 (no hard iteration limit)
 - Save process to `./.alin/specs/{feature_name}/requirements-confirm.md`
-- Ensure `agents-compliance.md` checklist is completed based on `rules-compact.md` before moving to implementation.
+- Ensure `agents-compliance.md` checklist is completed based on `rules-full.md` before moving to implementation.
 
 ## 🛑 User Approval Gate (Mandatory) 🛑
 
