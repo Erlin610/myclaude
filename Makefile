@@ -176,33 +176,34 @@ version:
 #   make install-workflow WORKFLOW=alin-dev ENV=cc TARGET=/abs/path
 #   make install-workflow WORKFLOW=alin-dev ENV=droid TARGET=/abs/path
 install-workflow:
-	@if [ -z "$(ENV)" ]; then echo "❌ ENV is required (cc|droid)"; exit 1; fi
-	@if [ -z "$(TARGET)" ]; then echo "❌ TARGET is required (absolute path)"; exit 1; fi
-	@if [ -z "$(WORKFLOW)" ]; then echo "❌ WORKFLOW is required (e.g., alin-dev)"; exit 1; fi
-	@WF_DIR="$(WORKFLOW)-$(ENV)-workflow"; \
-	if [ ! -d "$$WF_DIR" ]; then \
-	  # fallback to neutral directory name
-	  WF_DIR="$(WORKFLOW)-workflow"; \
-	  if [ ! -d "$$WF_DIR" ]; then echo "❌ Workflow directory not found: $$WF_DIR"; exit 1; fi; \
-	  echo "ℹ️  Using fallback directory: $$WF_DIR"; \
-	fi; \
-	if [ ! -d "$(TARGET)" ]; then echo "❌ TARGET does not exist: $(TARGET)"; exit 1; fi; \
-	case "$(ENV)" in \
-	  cc) \
-	    echo "🚀 Installing $$WF_DIR → $(TARGET)/.claude"; \
-	    mkdir -p "$(TARGET)/.claude/commands" "$(TARGET)/.claude/agents"; \
-	    cp $$WF_DIR/commands/*.md "$(TARGET)/.claude/commands/"; \
-	    cp $$WF_DIR/agents/*.md "$(TARGET)/.claude/agents/"; \
-	    echo "✅ Installed for CC at $(TARGET)/.claude" ;; \
-	  droid) \
-	    echo "🚀 Installing $$WF_DIR → $(TARGET)/.factory"; \
-	    mkdir -p "$(TARGET)/.factory/commands" "$(TARGET)/.factory/droids"; \
-	    cp $$WF_DIR/commands/*.md "$(TARGET)/.factory/commands/"; \
-	    cp $$WF_DIR/agents/*.md "$(TARGET)/.factory/droids/"; \
-	    echo "✅ Installed for Droid at $(TARGET)/.factory" ;; \
-	  *) \
-	    echo "❌ Unknown ENV: $(ENV). Use cc or droid."; exit 1 ;; \
-	esac
+	@ENV="$(ENV)" TARGET="$(TARGET)" WORKFLOW="$(WORKFLOW)" sh -eu -c ' \
+	  if [ -z "$$ENV" ]; then echo "ENV is required (cc|droid)"; exit 1; fi; \
+	  if [ -z "$$TARGET" ]; then echo "TARGET is required (absolute path)"; exit 1; fi; \
+	  if [ -z "$$WORKFLOW" ]; then echo "WORKFLOW is required (e.g., alin-dev)"; exit 1; fi; \
+	  WF_DIR="$$WORKFLOW-$$ENV-workflow"; \
+	  if [ ! -d "$$WF_DIR" ]; then \
+	    WF_DIR="$$WORKFLOW-workflow"; \
+	    if [ ! -d "$$WF_DIR" ]; then echo "Workflow directory not found: $$WF_DIR"; exit 1; fi; \
+	    echo "Using fallback directory: $$WF_DIR"; \
+	  fi; \
+	  TARGET_DIR="$$TARGET"; \
+	  if [ ! -d "$$TARGET_DIR" ]; then echo "TARGET does not exist: $$TARGET_DIR"; exit 1; fi; \
+	  if [ "$$ENV" = "cc" ]; then \
+	    echo "Installing $$WF_DIR to $$TARGET_DIR/.claude"; \
+	    mkdir -p "$$TARGET_DIR/.claude/commands" "$$TARGET_DIR/.claude/agents"; \
+	    cp "$$WF_DIR/commands/"*.md "$$TARGET_DIR/.claude/commands/"; \
+	    cp "$$WF_DIR/agents/"*.md "$$TARGET_DIR/.claude/agents/"; \
+	    echo "Installed for CC at $$TARGET_DIR/.claude"; \
+	  elif [ "$$ENV" = "droid" ]; then \
+	    echo "Installing $$WF_DIR to $$TARGET_DIR/.factory"; \
+	    mkdir -p "$$TARGET_DIR/.factory/commands" "$$TARGET_DIR/.factory/droids"; \
+	    cp "$$WF_DIR/commands/"*.md "$$TARGET_DIR/.factory/commands/"; \
+	    cp "$$WF_DIR/agents/"*.md "$$TARGET_DIR/.factory/droids/"; \
+	    echo "Installed for Droid at $$TARGET_DIR/.factory"; \
+	  else \
+	    echo "Unknown ENV: $$ENV. Use cc or droid."; exit 1; \
+	  fi; \
+	'
 
 # Convenience wrappers for alin-dev
 alin-dev-to:
