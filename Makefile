@@ -1,7 +1,8 @@
 # Claude Code Multi-Agent Workflow System Makefile
 # Quick deployment for BMAD and Requirements workflows
 
-.PHONY: help install deploy-bmad deploy-requirements deploy-essentials deploy-advanced deploy-alin deploy-all deploy-commands deploy-agents clean test
+.PHONY: help install deploy-bmad deploy-requirements deploy-essentials deploy-advanced deploy-alin deploy-all deploy-commands deploy-agents clean test install-workflow alin-dev-to alin-dev-to-cc alin-dev-to-droid
+.ONESHELL:
 
 # Default target
 help:
@@ -19,10 +20,21 @@ help:
 	@echo "  deploy-commands      - Deploy all slash commands"
 	@echo "  deploy-agents        - Deploy all agent configurations"
 	@echo "  deploy-all           - Deploy everything (commands + agents)"
+	@echo "  install-workflow     - Install a workflow into a TARGET project"
+	@echo "  alin-dev-to          - Convenience: install alin-dev to TARGET (ENV=cc|droid)"
+	@echo "  alin-dev-to-cc       - Convenience: install alin-dev to TARGET for CC"
+	@echo "  alin-dev-to-droid    - Convenience: install alin-dev to TARGET for Droid"
 	@echo "  test-bmad            - Test BMAD workflow with sample"
 	@echo "  test-requirements    - Test Requirements workflow with sample"
 	@echo "  clean                - Clean generated artifacts"
 	@echo "  help                 - Show this help message"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make install-workflow WORKFLOW=alin-dev ENV=cc TARGET=/path/to/project"
+	@echo "  make install-workflow WORKFLOW=alin-dev ENV=droid TARGET=/path/to/project"
+	@echo "  make alin-dev-to ENV=droid TARGET=/path/to/project"
+	@echo "  make alin-dev-to-cc TARGET=/path/to/project"
+	@echo "  make alin-dev-to-droid TARGET=/path/to/project"
 
 # Configuration paths
 CLAUDE_CONFIG_DIR = ~/.claude
@@ -158,3 +170,46 @@ all: deploy-all
 version:
 	@echo "Claude Code Multi-Agent Workflow System v3.1"
 	@echo "BMAD + Requirements-Driven Development"
+
+# Generic installer: copy workflow to a target project for cc/droid
+# Usage:
+#   make install-workflow WORKFLOW=alin-dev ENV=cc TARGET=/abs/path
+#   make install-workflow WORKFLOW=alin-dev ENV=droid TARGET=/abs/path
+install-workflow:
+	@if [ -z "$(ENV)" ]; then echo "❌ ENV is required (cc|droid)"; exit 1; fi
+	@if [ -z "$(TARGET)" ]; then echo "❌ TARGET is required (absolute path)"; exit 1; fi
+	@if [ -z "$(WORKFLOW)" ]; then echo "❌ WORKFLOW is required (e.g., alin-dev)"; exit 1; fi
+	@WF_DIR="$(WORKFLOW)-$(ENV)-workflow"; \
+	if [ ! -d "$$WF_DIR" ]; then \
+	  # fallback to neutral directory name
+	  WF_DIR="$(WORKFLOW)-workflow"; \
+	  if [ ! -d "$$WF_DIR" ]; then echo "❌ Workflow directory not found: $$WF_DIR"; exit 1; fi; \
+	  echo "ℹ️  Using fallback directory: $$WF_DIR"; \
+	fi; \
+	if [ ! -d "$(TARGET)" ]; then echo "❌ TARGET does not exist: $(TARGET)"; exit 1; fi; \
+	case "$(ENV)" in \
+	  cc) \
+	    echo "🚀 Installing $$WF_DIR → $(TARGET)/.claude"; \
+	    mkdir -p "$(TARGET)/.claude/commands" "$(TARGET)/.claude/agents"; \
+	    cp $$WF_DIR/commands/*.md "$(TARGET)/.claude/commands/"; \
+	    cp $$WF_DIR/agents/*.md "$(TARGET)/.claude/agents/"; \
+	    echo "✅ Installed for CC at $(TARGET)/.claude" ;; \
+	  droid) \
+	    echo "🚀 Installing $$WF_DIR → $(TARGET)/.factory"; \
+	    mkdir -p "$(TARGET)/.factory/commands" "$(TARGET)/.factory/droids"; \
+	    cp $$WF_DIR/commands/*.md "$(TARGET)/.factory/commands/"; \
+	    cp $$WF_DIR/agents/*.md "$(TARGET)/.factory/droids/"; \
+	    echo "✅ Installed for Droid at $(TARGET)/.factory" ;; \
+	  *) \
+	    echo "❌ Unknown ENV: $(ENV). Use cc or droid."; exit 1 ;; \
+	esac
+
+# Convenience wrappers for alin-dev
+alin-dev-to:
+	@$(MAKE) install-workflow WORKFLOW=alin-dev ENV=$(ENV) TARGET="$(TARGET)"
+
+alin-dev-to-cc:
+	@$(MAKE) install-workflow WORKFLOW=alin-dev ENV=cc TARGET="$(TARGET)"
+
+alin-dev-to-droid:
+	@$(MAKE) install-workflow WORKFLOW=alin-dev ENV=droid TARGET="$(TARGET)"
