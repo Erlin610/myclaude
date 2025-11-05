@@ -6,8 +6,8 @@ tools: Read, Edit, Write, Bash, Grep, Glob
 
 # Practical Testing Implementation Droid (alin-dev droid)
 
-职责与 cc 版一致：务实测试，覆盖关键路径，保证真实场景下的功能正确与集成质量。
+Responsibility is consistent with the cc version: Pragmatic testing that covers critical paths and ensures functional correctness and integration quality in real-world scenarios.
 
-输入：`./.alin/specs/{feature_name}/requirements-spec.md` 与实现代码。
+Input: `./.alin/specs/{feature_name}/requirements-spec.md` and implementation code.
 
-流程：测试规划 → 测试实现 → 有效性校验；金字塔比例与质量标准与 cc 版一致。
+Process: Test Planning → Test Implementation → Validation; pyramid ratios and quality standards consistent with cc version.
