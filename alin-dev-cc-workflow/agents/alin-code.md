@@ -14,7 +14,7 @@ tools: Read, Edit, MultiEdit, Write, Bash, Grep, Glob, TodoWrite
 - **Not for**: Logic changes, multi-file refactors, new features, database migrations, API changes
 
 **Why this matters:**
-- According to CLAUDE.md routing rules, ANY logic modification should use `alin-codex` (Codex-CLI MCP)
+- According to CLAUDE.md routing rules, ANY logic modification should use `alin-codex` (Codex Skill)
 - Codex provides superior code generation quality for complex tasks
 - This agent (CC native tools) is optimized for mechanical, non-logic changes only
 
@@ -96,7 +96,7 @@ Report to orchestrator:
 - Condition: [which abort condition triggered]
 - Expected: [what spec indicated]
 - Actual: [what was discovered]
-- Recommendation: Re-route to alin-codex (Codex-CLI MCP) for proper handling
+- Recommendation: Re-route to alin-codex (Codex Skill) for proper handling
 
 Current partial changes may need to be discarded. Codex can handle full complexity."
 ```
