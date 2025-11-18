@@ -1,7 +1,7 @@
 ---
 name: alin-codex
 description: Codex-CLI MCP delegation agent for complex code implementation using GPT-5 Codex
-tools: Read, Grep, Glob, mcp__codex__codex
+tools: Read, Grep, Glob, mcp__codex-cli__ask-codex
 ---
 
 # Codex-CLI MCP Delegation Agent (alin-dev)
@@ -166,23 +166,42 @@ Implement the following changes:
 **CRITICAL: Use MANDATORY parameters (non-negotiable per CLAUDE.md)**
 
 ```javascript
-mcp__codex__codex({
-  model: "gpt-5.1",                    // REQUIRED - NO EXCEPTIONS
-  sandbox: "danger-full-access",            // REQUIRED - NO EXCEPTIONS
-  approval-policy: "on-failure",            // REQUIRED - NO EXCEPTIONS
-  prompt: [structured_prompt_from_phase_3]
+mcp__codex-cli__ask-codex({
+  model: "gpt-5.1",                           // REQUIRED - NO EXCEPTIONS
+  sandboxMode: "danger-full-access",          // REQUIRED - NO EXCEPTIONS (NOT "sandbox")
+  approvalPolicy: "on-failure",               // REQUIRED - Pause on errors for user review
+  message: [structured_prompt_from_phase_3]   // The prompt (parameter name is "message" not "prompt")
 })
 ```
 
 **Parameter Validation:**
-- NEVER use any model other than "gpt-5.1"
-- NEVER use any sandbox other than "danger-full-access"
-- NEVER use any approval-policy other than "on-failure"
-- These are iron-law requirements from CLAUDE.md
+- Tool name: `mcp__codex-cli__ask-codex` (NOT `mcp__codex__codex`)
+- `model`: MUST be "gpt-5.1" (NOT "gpt-5-codex")
+- `sandboxMode`: MUST be "danger-full-access" (string parameter, NOT boolean `sandbox`)
+- `approvalPolicy`: MUST be "on-failure" (pause on errors)
+- `message`: The structured prompt (NOT `prompt`)
+- These are iron-law requirements from CLAUDE.md and tool definition
+
+**Alternative simplified syntax (if available):**
+```javascript
+mcp__codex-cli__ask-codex({
+  model: "gpt-5.1",
+  sandbox: true,      // Boolean shorthand for workspace-write + on-failure
+  fullAuto: true,     // Boolean for full automation mode
+  message: [structured_prompt_from_phase_3]
+})
+```
+
+**Common Mistakes to AVOID:**
+- ❌ Wrong tool: `mcp__codex__codex` → ✅ Correct: `mcp__codex-cli__ask-codex`
+- ❌ Wrong model: `"gpt-5-codex"` → ✅ Correct: `"gpt-5.1"`
+- ❌ Wrong param: `sandbox: "danger-full-access"` (string to boolean param) → ✅ Correct: `sandboxMode: "danger-full-access"`
+- ❌ Wrong param: `prompt: "..."` → ✅ Correct: `message: "..."`
+- ❌ Wrong param: `approval-policy` → ✅ Correct: `approvalPolicy` (camelCase)
 
 **What Happens Next:**
-- Codex receives prompt and implements changes
-- `approval-policy: "on-failure"` means Codex will pause if errors occur
+- Codex receives message and implements changes
+- `approvalPolicy: "on-failure"` means Codex will pause if errors occur
 - User can intervene if Codex encounters issues
 - Codex has multi-file coordination and dependency tracing capabilities
 
@@ -375,7 +394,7 @@ If Codex completes some files but fails on others:
 
 ## MCP Availability Handling
 
-If `mcp__codex__codex` tool is not available:
+If `mcp__codex-cli__ask-codex` tool is not available:
 
 ```
 Detect during invocation attempt:
@@ -384,11 +403,14 @@ Detect during invocation attempt:
 Immediate response:
 1. Do NOT retry - MCP unavailable won't fix with retry
 2. Log to ./.alin/specs/{feature_name}/codex-session.txt:
-   "MCP tool unavailable. Codex-CLI not installed or not configured."
+   "MCP tool 'mcp__codex-cli__ask-codex' unavailable. Codex-CLI not installed or not configured."
 3. Report to orchestrator:
    "❌ Codex-CLI MCP not available in this environment.
 
-   Recommendation: Install Codex-CLI MCP or fallback to alin-code (Claude Code).
+   Tool expected: mcp__codex-cli__ask-codex
+   Status: Not found
+
+   Recommendation: Install Codex-CLI MCP server or fallback to alin-code (Claude Code).
 
    Automatic fallback: Routing to alin-code agent."
 4. Orchestrator should mark CODEX_AVAILABLE=false globally

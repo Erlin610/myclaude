@@ -650,10 +650,13 @@ Extract from `requirements-spec.md`:
 On first workflow run (or if not cached):
 ```
 Test Codex-CLI MCP availability:
-- Attempt lightweight test call to mcp__codex__codex
+- Attempt lightweight test call to mcp__codex-cli__ask-codex
+- Test parameters: {model: "gpt-5.1", message: "test", sandboxMode: "read-only"}
 - If successful: mark CODEX_AVAILABLE=true, proceed with routing
-- If failed: mark CODEX_AVAILABLE=false, always use CC path
-- Log warning once: "Codex-CLI MCP not available. Using Claude Code for all tasks. Install Codex-CLI for higher quality code generation."
+- If failed (tool not found): mark CODEX_AVAILABLE=false, always use CC path
+- Log warning once: "Codex-CLI MCP not available (tool: mcp__codex-cli__ask-codex not found). Using Claude Code for all tasks. Install Codex-CLI MCP server for higher quality code generation."
+
+Note: Tool name is 'mcp__codex-cli__ask-codex' (NOT 'mcp__codex__codex')
 ```
 
 #### Save Routing Decision
@@ -733,11 +736,17 @@ Invoke `alin-codex` sub-agent:
 - Input: `requirements-spec.md` + repository context
 - Process:
   1. Transform spec into structured Codex prompt (CLAUDE.md template)
-  2. Invoke `mcp__codex__codex` with mandatory parameters
+  2. Invoke `mcp__codex-cli__ask-codex` with mandatory parameters:
+     - model: "gpt-5.1"
+     - sandboxMode: "danger-full-access"
+     - approvalPolicy: "on-failure"
+     - message: [structured prompt]
   3. Monitor execution with approval-on-failure safety
   4. Handle failures with fallback to CC (3-strike rule)
 - Output: Code changes in project files + session log
 - Logging: `./.alin/specs/{feature_name}/codex-session.txt`
+
+**Important**: Tool name is `mcp__codex-cli__ask-codex` (NOT `mcp__codex__codex`)
 
 **Step 3: Code Review**
 
