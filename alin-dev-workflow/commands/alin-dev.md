@@ -66,7 +66,15 @@ Start this phase after repository scanning completes:
 
 ### 1. Input Validation & Option Parsing
 - Parse Options: `--skip-tests`, `--skip-scan`, `--skip-manual`
-- Feature Name Generation: Extract from [$ARGUMENTS] using kebab-case
+- Feature Name Generation (2 simple rules):
+  - **Rule 1 - File reference**: If input contains `@file` pattern (e.g., `@ai_todo/1118_1_my_dev.md`):
+    - Extract filename: remove path and `.md` extension
+    - Keep original format as-is (preserve underscores, numbers, case)
+    - Example: `@ai_todo/1118_1_my_dev.md` → `1118_1_my_dev`
+  - **Rule 2 - Text description**: If input is plain text (e.g., `add user login`):
+    - Auto-prepend current date in MMDD format (e.g., `1118` for Nov 18)
+    - Convert description to kebab-case
+    - Example: `add user login` → `1118-add-user-login`
 - Create Directory: `./.alin/specs/{feature_name}/`
 - If input > 500 characters: Summarize and ask user to confirm summary
 - If input unclear: Ask targeted questions before proceeding
