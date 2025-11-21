@@ -167,7 +167,7 @@ Implement the following changes:
 
 ```javascript
 Bash({
-  command: `uv run ~/.claude/skills/codex/scripts/codex.py "${structured_prompt_from_phase_3}" "gpt-5.1-codex"`,
+  command: `uv run ~/.claude/skills/codex/scripts/codex.py "${structured_prompt_from_phase_3}" "gpt-5.1-codex-max"`,
   timeout: 7200000,  // 2 hours in milliseconds (MANDATORY)
   description: "Execute Codex for feature implementation"
 })
@@ -181,8 +181,8 @@ Bash({
   - If >800 chars, codex.py automatically uses stdin to avoid shell escaping issues
   - Supports `@file` syntax for file references (e.g., `@src/main.ts`)
 - **Argument 2**: Model selection
-  - Use `"gpt-5.1-codex"` (default, optimized for code)
-  - Alternative: `"gpt-5.1"` (general purpose)
+  - Use `"gpt-5.1-codex-max"` (default, optimized for code)
+  - Alternative: `"gpt-5.1-codex-max"` (general purpose)
 - **Argument 3** (optional): Working directory
   - Default: current directory (`.`)
   - Example: `"./src"` to run Codex in src subdirectory
@@ -254,7 +254,7 @@ Write to `./.alin/specs/{feature_name}/codex-session.txt`:
 ```
 === Codex Skill Session Log ===
 Timestamp: [ISO 8601 timestamp]
-Model: gpt-5.1-codex
+Model: gpt-5.1-codex-max
 Execution Method: Skill (via Bash Tool)
 
 Task Summary:

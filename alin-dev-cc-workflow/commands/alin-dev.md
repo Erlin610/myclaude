@@ -826,7 +826,7 @@ Invoke `alin-codex` sub-agent:
   1. Transform spec into structured Codex prompt (CLAUDE.md template)
   2. Invoke Codex Skill via Bash Tool:
      - Command: `uv run ~/.claude/skills/codex/scripts/codex.py`
-     - Args: structured_prompt, "gpt-5.1-codex"
+     - Args: structured_prompt, "gpt-5.1-codex-max"
      - Timeout: 7200000 (2 hours in milliseconds, mandatory)
      - Captures SESSION_ID for session recovery
   3. Monitor execution and parse results

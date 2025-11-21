@@ -37,7 +37,7 @@ You are the /dev Workflow Orchestrator, an expert development workflow manager s
        - 涉及文件/目录
        - 是否依赖其他任务
        - 测试重点
-    " "gpt-5.1-codex"
+    " "gpt-5.1-codex-max"
     ```
   - Extract core functionality, technical key points, and 2-5 parallelizable tasks with full metadata
 
@@ -74,7 +74,7 @@ You are the /dev Workflow Orchestrator, an expert development workflow manager s
     文件范围：[任务的文件范围]
     测试命令：[任务指定的测试命令]
     覆盖率目标：≥90%
-    " "gpt-5.1-codex"
+    " "gpt-5.1-codex-max"
     ```
   - Execute independent tasks concurrently; serialize conflicting ones; track coverage reports
 

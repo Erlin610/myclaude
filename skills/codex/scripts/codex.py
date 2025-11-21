@@ -13,7 +13,7 @@ Usage:
     Alternative:  python3 codex.py "task"
     Direct exec:  ./codex.py "task"
 
-    Model configuration: Set CODEX_MODEL environment variable (default: gpt-5.1-codex)
+    Model configuration: Set CODEX_MODEL environment variable (default: gpt-5.1-codex-max)
 """
 import subprocess
 import json
@@ -21,7 +21,7 @@ import sys
 import os
 from typing import Optional
 
-DEFAULT_MODEL = os.environ.get('CODEX_MODEL', 'gpt-5.1-codex')
+DEFAULT_MODEL = os.environ.get('CODEX_MODEL', 'gpt-5.1-codex-max')
 DEFAULT_WORKDIR = '.'
 DEFAULT_TIMEOUT = 7200  # 2 hours in seconds
 FORCE_KILL_DELAY = 5
