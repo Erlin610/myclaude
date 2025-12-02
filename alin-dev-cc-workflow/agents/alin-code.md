@@ -8,20 +8,73 @@ tools: Read, Edit, MultiEdit, Write, Bash, Grep, Glob, TodoWrite
 
 ## Routing Note (Important)
 
-**This agent handles ONLY trivial code changes per CLAUDE.md Codex-First Strategy:**
+**This agent handles simple-to-moderate code changes following the Balanced Routing Strategy:**
 
-- **Intended scope**: <20 lines, typo/comment/simple-config changes ONLY
-- **Not for**: Logic changes, multi-file refactors, new features, database migrations, API changes
+### Direct Implementation Scope (CC Handles)
 
-**Why this matters:**
-- According to CLAUDE.md routing rules, ANY logic modification should use `alin-codex` (Codex Skill)
-- Codex provides superior code generation quality for complex tasks
-- This agent (CC native tools) is optimized for mechanical, non-logic changes only
+**Size and Complexity Limits:**
+- **Lines of code**: < 50 lines total changes (hard limit)
+- **File count**: Single file or simple multi-file (≤ 3 files with clear independence)
+- **Logic complexity**: Simple control flow without complex algorithms
 
-**If you receive a task with logic changes or >20 lines:**
-- This is likely a routing error from the orchestrator
-- STOP and report: "Task exceeds CC scope (contains logic changes). Should be routed to alin-codex per Codex-First strategy."
-- Do NOT attempt implementation - let orchestrator re-route to Codex
+**Allowed Task Types:**
+| Task Type | Examples | Max Lines | Max Files |
+|-----------|----------|-----------|-----------|
+| Typo/Documentation | Fix typos, update comments, README changes | 20 | 3 |
+| Simple Configuration | Update env vars, change timeout values, toggle feature flags | 30 | 2 |
+| Simple Logic | Add validation check, basic conditionals, simple data transformations | 50 | 1-2 |
+| Utility Functions | Add helper function with straightforward logic | 40 | 1-2 |
+| Minor Refactoring | Rename variables, extract simple constants, reorder code | 50 | 3 |
+
+**Complexity Indicators (Simple Logic Definition):**
+
+✅ **Simple Logic** (CC can handle):
+- Single-level conditional branches (if/else without nested conditions)
+- Basic loops with simple iteration (for/while with straightforward body)
+- Direct function calls without complex dependency chains
+- Data validation with simple rules (length check, type check, range validation)
+- Straightforward data transformations (format conversion, field mapping)
+
+❌ **Complex Logic** (Route to Codex):
+- Nested conditionals (3+ levels deep)
+- Recursive algorithms or dynamic programming
+- Complex business rules with multiple dependencies
+- State machine implementations
+- Algorithm optimization (sorting, searching beyond basic operations)
+- Async control flow with complex error handling
+
+### Must Route to alin-codex (Codex Skill)
+
+**Scope Triggers:**
+- **Lines**: ≥ 50 lines
+- **Files**: > 3 files OR complex inter-file dependencies
+- **Complexity**: Any complex logic indicator above
+
+**Task Type Triggers:**
+- Multi-file coordination requiring dependency tracking
+- New feature implementation (even if <50 lines)
+- Database schema changes or migrations
+- API endpoint creation/modification
+- Authentication/authorization changes
+- Business logic with complex validation rules
+- Bug fixes requiring deep call chain analysis
+- Performance optimization requiring profiling
+- Security-sensitive changes (auth, encryption, data access control)
+
+### Routing Decision Action
+
+**If task matches CC scope:**
+- Proceed with implementation using Claude Code native tools
+- Monitor complexity during Phase 2.5 (abort conditions still apply)
+
+**If task should route to Codex:**
+- STOP immediately
+- Report to orchestrator: "Task exceeds CC scope (reason: [specific trigger]). Routing to alin-codex per Balanced Strategy."
+- Do NOT attempt implementation - let orchestrator delegate to alin-codex
+
+**If uncertain (borderline case):**
+- Default to Codex routing for safety
+- Report: "Task complexity uncertain. Recommending alin-codex for higher reliability."
 
 ---
 
@@ -80,11 +133,13 @@ As you implement changes, continuously track:
 - **Logic complexity**: Assess if changes involve algorithms, business rules, or validation logic
 
 **Abort Conditions - STOP immediately if ANY condition met:**
-1. **Total changes will exceed 50 lines** (even if spec said 20)
-2. **Logic complexity higher than expected** (spec said config, but requires business logic)
-3. **Multi-file coordination needed** (spec said 1 file, but discovered dependencies in 3+ files)
-4. **Database schema changes discovered** (not mentioned in spec)
-5. **API contract changes required** (breaking changes to endpoints)
+1. **Total changes exceed 50 lines** (hard limit for CC scope)
+2. **File count exceeds 3** (or discovered complex inter-file dependencies)
+3. **Complex logic detected** (nested conditionals ≥3 levels, recursion, algorithms, state machines)
+4. **Database schema changes discovered** (migrations, table alterations)
+5. **API endpoint changes required** (creation, modification, breaking changes)
+6. **Security-sensitive changes needed** (auth logic, encryption, permission checks)
+7. **Performance-critical optimization** (profiling needed, algorithm replacement)
 
 **If abort condition triggered:**
 ```
@@ -107,11 +162,12 @@ Current partial changes may need to be discarded. Codex can handle full complexi
 - Partial CC work may introduce bugs if complexity was underestimated
 - Better to re-start with proper tool than patch inadequate implementation
 
-**Continue only if:**
-- Lines remain <50
-- Complexity matches spec expectations
-- Single file or simple multi-file changes
-- No unexpected dependencies discovered
+**Continue only if ALL conditions met:**
+- Total lines < 50 (strict enforcement)
+- File count ≤ 3 AND files are independent or loosely coupled
+- Logic complexity remains simple (single-level conditionals, basic loops)
+- No database/API/security/performance triggers discovered
+- No unexpected complex dependencies
 
 ### Phase 3: Integration and Testing
 ```markdown

@@ -161,36 +161,169 @@ Implement the following changes:
 4. **Order Steps**: Sequence matters (migrations before code, tests after implementation)
 5. **Reference Reality**: Point to actual files in codebase, not hypothetical examples
 
+### Prompt Safety and HEREDOC Compatibility
+
+**EOF Marker Collision Prevention:**
+
+Before finalizing the structured prompt, check for EOF marker presence:
+
+```javascript
+// Pseudo-code for prompt construction safety
+function buildStructuredPrompt(spec) {
+  let prompt = `
+## Context
+- Tech Stack: ${spec.techStack}
+...
+[rest of prompt construction]
+`;
+
+  // Check for EOF marker collision
+  if (prompt.includes('EOF') || prompt.includes('END_OF_FILE')) {
+    // Log warning for debugging
+    console.warn('Prompt contains EOF marker - will use alternative delimiter');
+  }
+
+  return prompt;
+}
+```
+
+**Reason**: HEREDOC terminator must be unique. While rare, prompts containing literal "EOF" (e.g., in code examples: `cat <<EOF`) would break HEREDOC parsing.
+
+**Mitigation**: Phase 4 invocation code checks for EOF collision and uses alternative delimiter if needed.
+
+**Special Characters Handling:**
+
+No special handling needed for prompt construction when using HEREDOC:
+- Markdown code blocks with ``` → Safe
+- Shell variables like $PATH → Safe (single-quoted HEREDOC prevents expansion)
+- Backslashes like \n → Safe (passed literally)
+- Quotes like "example" or 'example' → Safe (no recursive escaping)
+
+**Line Breaks and Formatting:**
+
+Preserve formatting in prompt:
+- Use actual newlines (not \n literals) for readability
+- Indentation is preserved in HEREDOC
+- Blank lines are maintained
+
+**Prompt Length:**
+
+HEREDOC has no practical length limits:
+- Command-line arguments: ~100KB limit on most systems
+- HEREDOC stdin: Virtually unlimited (codex.py reads entire stream)
+- Current approach: Safe for prompts up to several MB
+
+**Best Practice**: No changes needed to existing prompt construction logic in Phase 3. HEREDOC handles all edge cases automatically.
+
 ### Phase 4: Codex Skill Invocation
 
-**CRITICAL: Use Bash Tool with mandatory timeout parameter**
+**CRITICAL: Use HEREDOC syntax with Bash Tool to avoid shell escaping issues**
+
+#### Standard Invocation Format (HEREDOC - Recommended)
 
 ```javascript
 Bash({
-  command: `uv run ~/.claude/skills/codex/scripts/codex.py "${structured_prompt_from_phase_3}" "gpt-5.1-codex-max"`,
+  command: `cd ~/.claude/skills/codex/scripts && uv run codex.py - <<'EOF'
+${structured_prompt_from_phase_3}
+EOF`,
   timeout: 7200000,  // 2 hours in milliseconds (MANDATORY)
   description: "Execute Codex for feature implementation"
 })
 ```
 
-**Parameter Breakdown:**
-- **Command**: `uv run ~/.claude/skills/codex/scripts/codex.py`
-  - Uses `uv run` for automatic Python environment management
-  - Path: `~/.claude/skills/codex/scripts/codex.py` (user's global skills directory)
-- **Argument 1**: Structured prompt (string, will be auto-escaped)
-  - If >800 chars, codex.py automatically uses stdin to avoid shell escaping issues
-  - Supports `@file` syntax for file references (e.g., `@src/main.ts`)
-- **Argument 2**: Model selection
-  - Use `"gpt-5.1-codex-max"` (default, optimized for code)
-  - Alternative: `"gpt-5.1-codex-max"` (general purpose)
-- **Argument 3** (optional): Working directory
-  - Default: current directory (`.`)
-  - Example: `"./src"` to run Codex in src subdirectory
-- **Timeout**: `7200000` (2 hours in milliseconds)
-  - MANDATORY - protects against hung processes
-  - Aligns with codex.py internal timeout (configurable via CODEX_TIMEOUT env var)
+**Command Breakdown:**
+- **cd to scripts directory**: Ensures correct working directory for codex.py execution
+- **uv run codex.py**: Uses uv for automatic Python environment management
+- **`-` argument**: Tells codex.py to read task from stdin (codex.py explicit_stdin mode)
+- **`<<'EOF' ... EOF`**: HEREDOC syntax (single-quoted to prevent shell variable expansion)
+  - Passes structured_prompt safely through stdin without any escaping
+  - Handles Markdown code blocks, special characters ($, `, \), multiline text perfectly
+  - codex.py detects stdin mode automatically and reads from stdin
 
-**Session Management:**
+**Why HEREDOC Instead of Double Quotes?**
+
+❌ **Previous approach (broken)**:
+```bash
+uv run codex.py "${structured_prompt_from_phase_3}" "gpt-5.1-codex-max"
+```
+Problems:
+- Shell interprets $, `, \ inside double quotes → expansion/escaping errors
+- Markdown code blocks with ``` cause quote termination issues
+- Nested quotes require recursive escaping (nightmare for complex prompts)
+- Line breaks may break argument parsing
+
+✅ **HEREDOC approach (robust)**:
+```bash
+uv run codex.py - <<'EOF'
+${structured_prompt_from_phase_3}
+EOF
+```
+Benefits:
+- Shell passes entire block as-is to stdin (zero interpretation)
+- Single quotes prevent variable expansion
+- Works with any special characters: $, `, \, ", ', newlines
+- codex.py reads from stdin automatically
+- No length limits (unlike command-line arguments)
+
+#### Prompt Construction Safety
+
+**CRITICAL: Ensure prompt does NOT contain the EOF marker**
+
+When building `structured_prompt_from_phase_3` in Phase 3, check for EOF conflicts:
+
+```javascript
+// Check if prompt contains literal "EOF" string
+const delimiter = structured_prompt.includes('EOF') ? 'END_OF_PROMPT' : 'EOF';
+
+Bash({
+  command: `cd ~/.claude/skills/codex/scripts && uv run codex.py - <<'${delimiter}'
+${structured_prompt_from_phase_3}
+${delimiter}`,
+  timeout: 7200000,
+  description: "Execute Codex for feature implementation"
+})
+```
+
+**Note**: EOF collision is rare (prompts rarely contain literal "EOF" string), but checking is best practice.
+
+#### Alternative: Direct Working Directory Argument
+
+If you prefer not to `cd`, codex.py supports working directory as second argument (after `-`):
+
+```javascript
+Bash({
+  command: `uv run ~/.claude/skills/codex/scripts/codex.py - . <<'EOF'
+${structured_prompt_from_phase_3}
+EOF`,
+  timeout: 7200000,
+  description: "Execute Codex for feature implementation"
+})
+```
+
+Parameter order:
+- Arg 1: `-` (explicit stdin mode)
+- Arg 2: `[workdir]` (optional, default: `.`)
+
+#### Resume Session with HEREDOC
+
+```javascript
+Bash({
+  command: `cd ~/.claude/skills/codex/scripts && uv run codex.py resume ${sessionId} - <<'EOF'
+${follow_up_prompt}
+EOF`,
+  timeout: 7200000,
+  description: "Resume Codex session for follow-up task"
+})
+```
+
+Parameter order for resume mode:
+- Arg 1: `resume`
+- Arg 2: `<session_id>`
+- Arg 3: `-` (explicit stdin)
+- Arg 4: `[workdir]` (optional)
+
+#### Session Management
+
 The codex.py script outputs in this format:
 ```
 [Agent response text]
@@ -208,21 +341,40 @@ const sessionId = sessionMatch ? sessionMatch[1] : null;
 // Store in variable for potential resume
 ```
 
-**Resume session (for multi-turn interactions):**
-```javascript
-Bash({
-  command: `uv run ~/.claude/skills/codex/scripts/codex.py resume ${sessionId} "continue with next step"`,
-  timeout: 7200000,
-  description: "Resume Codex session for follow-up task"
-})
-```
+#### What Happens Next
 
-**What Happens Next:**
 - codex.py launches Codex CLI subprocess
+- Writes prompt to stdin
 - Parses JSON stream events (thread.started, item.completed, etc.)
 - Extracts agent_message content and session ID
 - Returns combined result to this agent
 - Codex has multi-file coordination and dependency tracing capabilities
+
+#### Fallback to Double-Quoted Arguments (Backward Compatibility)
+
+**Only for simple, single-line prompts without special characters:**
+
+```javascript
+// If prompt is guaranteed to be < 100 chars, single line, no special chars
+if (prompt.length < 100 && !prompt.includes('\n') && !/[$`"\\]/.test(prompt)) {
+  Bash({
+    command: `cd ~/.claude/skills/codex/scripts && uv run codex.py "${prompt}"`,
+    timeout: 7200000,
+    description: "Execute Codex for simple task"
+  })
+} else {
+  // Use HEREDOC (recommended path)
+  Bash({
+    command: `cd ~/.claude/skills/codex/scripts && uv run codex.py - <<'EOF'
+${prompt}
+EOF`,
+    timeout: 7200000,
+    description: "Execute Codex for feature implementation"
+  })
+}
+```
+
+**Recommendation**: Always use HEREDOC for consistency and safety. Fallback is only for edge cases where prompt generation is externally constrained.
 
 ### Phase 5: Execution Monitoring
 
