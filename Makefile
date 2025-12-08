@@ -8,10 +8,12 @@
 help:
 	@echo "Claude Code Multi-Agent Workflow - Quick Deployment"
 	@echo ""
+	@echo "Recommended installation: python3 install.py --install-dir ~/.claude"
+	@echo ""
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Targets:"
-	@echo "  install              - Install all configurations to Claude Code"
+	@echo "  install              - LEGACY: install all configurations (prefer install.py)"
 	@echo "  deploy-bmad          - Deploy BMAD workflow (bmad-pilot)"
 	@echo "  deploy-requirements  - Deploy Requirements workflow (requirements-pilot)"
 	@echo "  deploy-essentials    - Deploy Development Essentials workflow"
@@ -48,6 +50,8 @@ OUTPUT_STYLES_DIR = output-styles
 
 # Install all configurations
 install: deploy-all
+	@echo "⚠️  LEGACY PATH: make install will be removed in future versions."
+	@echo "    Prefer: python3 install.py --install-dir ~/.claude"
 	@echo "✅ Installation complete!"
 
 # Deploy BMAD workflow
@@ -154,47 +158,3 @@ all: deploy-all
 version:
 	@echo "Claude Code Multi-Agent Workflow System v3.1"
 	@echo "BMAD + Requirements-Driven Development"
-
-# Generic installer: copy workflow to a target project for cc/droid
-# Usage:
-#   make install-workflow WORKFLOW=alin-dev ENV=cc TARGET=/abs/path
-#   make install-workflow WORKFLOW=alin-dev ENV=droid TARGET=/abs/path
-install-workflow:
-	@ENV="$(ENV)" TARGET="$(TARGET)" WORKFLOW="$(WORKFLOW)" sh -eu -c ' \
-	  if [ -z "$$ENV" ]; then echo "ENV is required (cc|droid)"; exit 1; fi; \
-	  if [ -z "$$TARGET" ]; then echo "TARGET is required (absolute path)"; exit 1; fi; \
-	  if [ -z "$$WORKFLOW" ]; then echo "WORKFLOW is required (e.g., alin-dev)"; exit 1; fi; \
-	  WF_DIR="$$WORKFLOW-$$ENV-workflow"; \
-	  if [ ! -d "$$WF_DIR" ]; then \
-	    WF_DIR="$$WORKFLOW-workflow"; \
-	    if [ ! -d "$$WF_DIR" ]; then echo "Workflow directory not found: $$WF_DIR"; exit 1; fi; \
-	    echo "Using fallback directory: $$WF_DIR"; \
-	  fi; \
-	  TARGET_DIR="$$TARGET"; \
-	  if [ ! -d "$$TARGET_DIR" ]; then echo "TARGET does not exist: $$TARGET_DIR"; exit 1; fi; \
-	  if [ "$$ENV" = "cc" ]; then \
-	    echo "Installing $$WF_DIR to $$TARGET_DIR/.claude"; \
-	    mkdir -p "$$TARGET_DIR/.claude/commands" "$$TARGET_DIR/.claude/agents"; \
-	    cp "$$WF_DIR/commands/"*.md "$$TARGET_DIR/.claude/commands/"; \
-	    cp "$$WF_DIR/agents/"*.md "$$TARGET_DIR/.claude/agents/"; \
-	    echo "Installed for CC at $$TARGET_DIR/.claude"; \
-	  elif [ "$$ENV" = "droid" ]; then \
-	    echo "Installing $$WF_DIR to $$TARGET_DIR/.factory"; \
-	    mkdir -p "$$TARGET_DIR/.factory/commands" "$$TARGET_DIR/.factory/droids"; \
-	    cp "$$WF_DIR/commands/"*.md "$$TARGET_DIR/.factory/commands/"; \
-	    cp "$$WF_DIR/agents/"*.md "$$TARGET_DIR/.factory/droids/"; \
-	    echo "Installed for Droid at $$TARGET_DIR/.factory"; \
-	  else \
-	    echo "Unknown ENV: $$ENV. Use cc or droid."; exit 1; \
-	  fi; \
-	'
-
-# Convenience wrappers for alin-dev
-alin-dev-to:
-	@$(MAKE) install-workflow WORKFLOW=alin-dev ENV=$(ENV) TARGET="$(TARGET)"
-
-alin-dev-to-cc:
-	@$(MAKE) install-workflow WORKFLOW=alin-dev ENV=cc TARGET="$(TARGET)"
-
-alin-dev-to-droid:
-	@$(MAKE) install-workflow WORKFLOW=alin-dev ENV=droid TARGET="$(TARGET)"

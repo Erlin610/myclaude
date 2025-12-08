@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,7 +25,6 @@ const (
 	version            = "4.8.2"
 	defaultWorkdir     = "."
 	defaultTimeout     = 7200 // seconds
-	forceKillDelay     = 5    // seconds
 	codexLogLineLimit  = 1000
 	stdinSpecialChars  = "\n\\\"'`$"
 	stderrCaptureLimit = 4 * 1024
@@ -41,7 +41,16 @@ var (
 	buildCodexArgsFn = buildCodexArgs
 	commandContext   = exec.CommandContext
 	jsonMarshal      = json.Marshal
+	cleanupLogsFn    = cleanupOldLogs
+	signalNotifyFn   = signal.Notify
+	signalStopFn     = signal.Stop
 )
+
+var forceKillDelay atomic.Int32
+
+func init() {
+	forceKillDelay.Store(5) // seconds - default value
+}
 
 // Config holds CLI configuration
 type Config struct {
@@ -358,8 +367,37 @@ func main() {
 	os.Exit(exitCode)
 }
 
+func runStartupCleanup() {
+	if cleanupLogsFn == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			logWarn(fmt.Sprintf("cleanupOldLogs panic: %v", r))
+		}
+	}()
+	if _, err := cleanupLogsFn(); err != nil {
+		logWarn(fmt.Sprintf("cleanupOldLogs error: %v", err))
+	}
+}
+
 // run is the main logic, returns exit code for testability
 func run() (exitCode int) {
+	// Handle --version and --help first (no logger needed)
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--cleanup":
+			return runCleanupMode()
+		case "--version", "-v":
+			fmt.Printf("codex-wrapper version %s\n", version)
+			return 0
+		case "--help", "-h":
+			printHelp()
+			return 0
+		}
+	}
+
+	// Initialize logger for all other commands
 	logger, err := NewLogger()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: failed to initialize logger: %v\n", err)
@@ -375,25 +413,21 @@ func run() (exitCode int) {
 		if err := closeLogger(); err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: failed to close logger: %v\n", err)
 		}
-		if exitCode == 0 && logger != nil {
+		// Always remove log file after completion
+		if logger != nil {
 			if err := logger.RemoveLogFile(); err != nil && !os.IsNotExist(err) {
-				fmt.Fprintf(os.Stderr, "ERROR: failed to remove logger file: %v\n", err)
+				// Silently ignore removal errors
 			}
-		} else if exitCode != 0 && logger != nil {
-			fmt.Fprintf(os.Stderr, "Log file retained at: %s\n", logger.Path())
 		}
 	}()
 	defer runCleanupHook()
 
-	// Handle --version and --help first
+	// Run cleanup asynchronously to avoid blocking startup
+	go runStartupCleanup()
+
+	// Handle remaining commands
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "--version", "-v":
-			fmt.Printf("codex-wrapper version %s\n", version)
-			return 0
-		case "--help", "-h":
-			printHelp()
-			return 0
 		case "--parallel":
 			if len(os.Args) > 2 {
 				fmt.Fprintln(os.Stderr, "ERROR: --parallel reads its task configuration from stdin and does not accept additional arguments.")
@@ -481,6 +515,18 @@ func run() (exitCode int) {
 
 	useStdin := cfg.ExplicitStdin || shouldUseStdin(taskText, piped)
 
+	targetArg := taskText
+	if useStdin {
+		targetArg = "-"
+	}
+	codexArgs := buildCodexArgsFn(cfg, targetArg)
+
+	// Print startup information to stderr
+	fmt.Fprintf(os.Stderr, "[codex-wrapper]\n")
+	fmt.Fprintf(os.Stderr, "  Command: %s %s\n", codexCommand, strings.Join(codexArgs, " "))
+	fmt.Fprintf(os.Stderr, "  PID: %d\n", os.Getpid())
+	fmt.Fprintf(os.Stderr, "  Log: %s\n", logger.Path())
+
 	if useStdin {
 		var reasons []string
 		if piped {
@@ -536,6 +582,38 @@ func run() (exitCode int) {
 		fmt.Printf("\n---\nSESSION_ID: %s\n", result.SessionID)
 	}
 
+	return 0
+}
+
+func runCleanupMode() int {
+	if cleanupLogsFn == nil {
+		fmt.Fprintln(os.Stderr, "Cleanup failed: log cleanup function not configured")
+		return 1
+	}
+
+	stats, err := cleanupLogsFn()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Cleanup failed: %v\n", err)
+		return 1
+	}
+
+	fmt.Println("Cleanup completed")
+	fmt.Printf("Files scanned: %d\n", stats.Scanned)
+	fmt.Printf("Files deleted: %d\n", stats.Deleted)
+	if len(stats.DeletedFiles) > 0 {
+		for _, f := range stats.DeletedFiles {
+			fmt.Printf("  - %s\n", f)
+		}
+	}
+	fmt.Printf("Files kept: %d\n", stats.Kept)
+	if len(stats.KeptFiles) > 0 {
+		for _, f := range stats.KeptFiles {
+			fmt.Printf("  - %s\n", f)
+		}
+	}
+	if stats.Errors > 0 {
+		fmt.Printf("Deletion errors: %d\n", stats.Errors)
+	}
 	return 0
 }
 
@@ -907,21 +985,30 @@ func (b *tailBuffer) String() string {
 
 func forwardSignals(ctx context.Context, cmd *exec.Cmd, logErrorFn func(string)) {
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signals := []os.Signal{syscall.SIGINT}
+	if runtime.GOOS != "windows" {
+		signals = append(signals, syscall.SIGTERM)
+	}
+	signalNotifyFn(sigCh, signals...)
 
 	go func() {
-		defer signal.Stop(sigCh)
+		defer signalStopFn(sigCh)
 		select {
 		case sig := <-sigCh:
 			logErrorFn(fmt.Sprintf("Received signal: %v", sig))
-			if cmd.Process != nil {
-				cmd.Process.Signal(syscall.SIGTERM)
-				time.AfterFunc(time.Duration(forceKillDelay)*time.Second, func() {
-					if cmd.Process != nil {
-						cmd.Process.Kill()
-					}
-				})
+			if cmd.Process == nil {
+				return
 			}
+			if runtime.GOOS == "windows" {
+				_ = cmd.Process.Kill()
+				return
+			}
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+			time.AfterFunc(time.Duration(forceKillDelay.Load())*time.Second, func() {
+				if cmd.Process != nil {
+					_ = cmd.Process.Kill()
+				}
+			})
 		case <-ctx.Done():
 		}
 	}()
@@ -944,9 +1031,14 @@ func terminateProcess(cmd *exec.Cmd) *time.Timer {
 		return nil
 	}
 
+	if runtime.GOOS == "windows" {
+		_ = cmd.Process.Kill()
+		return nil
+	}
+
 	_ = cmd.Process.Signal(syscall.SIGTERM)
 
-	return time.AfterFunc(time.Duration(forceKillDelay)*time.Second, func() {
+	return time.AfterFunc(time.Duration(forceKillDelay.Load())*time.Second, func() {
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
 		}
@@ -1210,24 +1302,18 @@ func farewell(name string) string {
 }
 
 func logInfo(msg string) {
-	fmt.Fprintf(os.Stderr, "INFO: %s\n", msg)
-
 	if logger := activeLogger(); logger != nil {
 		logger.Info(msg)
 	}
 }
 
 func logWarn(msg string) {
-	fmt.Fprintf(os.Stderr, "WARN: %s\n", msg)
-
 	if logger := activeLogger(); logger != nil {
 		logger.Warn(msg)
 	}
 }
 
 func logError(msg string) {
-	fmt.Fprintf(os.Stderr, "ERROR: %s\n", msg)
-
 	if logger := activeLogger(); logger != nil {
 		logger.Error(msg)
 	}
