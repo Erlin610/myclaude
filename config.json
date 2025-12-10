@@ -84,6 +84,23 @@
           "description": "Copy development commands documentation"
         }
       ]
+    },
+    "alin-maint": {
+      "enabled": false,
+      "description": "ALIN-powered operations automation workflow for monitoring, deployment, incidents, security, and optimization",
+      "operations": [
+        {
+          "type": "merge_dir",
+          "source": "alin-maint-workflow",
+          "description": "Merge ALIN maint commands and agents"
+        },
+        {
+          "type": "copy_file",
+          "source": "alin-maint-workflow/README.md",
+          "target": "docs/ALIN-MAINT-WORKFLOW.md",
+          "description": "Copy ALIN maint workflow documentation"
+        }
+      ]
     }
   }
 }
