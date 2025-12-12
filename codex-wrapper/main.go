@@ -22,12 +22,19 @@ import (
 )
 
 const (
-	version            = "4.8.2"
+	version            = "5.1.2"
 	defaultWorkdir     = "."
 	defaultTimeout     = 7200 // seconds
 	codexLogLineLimit  = 1000
 	stdinSpecialChars  = "\n\\\"'`$"
 	stderrCaptureLimit = 4 * 1024
+	stdoutDrainTimeout = 5 * time.Second
+)
+
+const (
+	stdoutCloseReasonWait  = "wait-complete"
+	stdoutCloseReasonCtx   = "context-cancelled"
+	stdoutCloseReasonDrain = "drain-timeout"
 )
 
 // Test hooks for dependency injection
@@ -40,16 +47,91 @@ var (
 
 	buildCodexArgsFn = buildCodexArgs
 	commandContext   = exec.CommandContext
-	jsonMarshal      = json.Marshal
-	cleanupLogsFn    = cleanupOldLogs
-	signalNotifyFn   = signal.Notify
-	signalStopFn     = signal.Stop
+	newCommandRunner = func(ctx context.Context, name string, args ...string) commandRunner {
+		return &realCmd{cmd: commandContext(ctx, name, args...)}
+	}
+	jsonMarshal        = json.Marshal
+	cleanupLogsFn      = cleanupOldLogs
+	signalNotifyFn     = signal.Notify
+	signalStopFn       = signal.Stop
+	terminateCommandFn = terminateCommand
 )
 
 var forceKillDelay atomic.Int32
 
 func init() {
 	forceKillDelay.Store(5) // seconds - default value
+}
+
+type commandRunner interface {
+	Start() error
+	Wait() error
+	StdoutPipe() (io.ReadCloser, error)
+	StdinPipe() (io.WriteCloser, error)
+	SetStderr(io.Writer)
+	Process() processHandle
+}
+
+type processHandle interface {
+	Pid() int
+	Kill() error
+	Signal(os.Signal) error
+}
+
+type realCmd struct {
+	cmd *exec.Cmd
+}
+
+func (r *realCmd) Start() error {
+	return r.cmd.Start()
+}
+
+func (r *realCmd) Wait() error {
+	return r.cmd.Wait()
+}
+
+func (r *realCmd) StdoutPipe() (io.ReadCloser, error) {
+	return r.cmd.StdoutPipe()
+}
+
+func (r *realCmd) StdinPipe() (io.WriteCloser, error) {
+	return r.cmd.StdinPipe()
+}
+
+func (r *realCmd) SetStderr(w io.Writer) {
+	r.cmd.Stderr = w
+}
+
+func (r *realCmd) Process() processHandle {
+	if r.cmd == nil || r.cmd.Process == nil {
+		return nil
+	}
+	return &realProcess{proc: r.cmd.Process}
+}
+
+type realProcess struct {
+	proc *os.Process
+}
+
+func (p *realProcess) Pid() int {
+	if p == nil || p.proc == nil {
+		return 0
+	}
+	return p.proc.Pid
+}
+
+func (p *realProcess) Kill() error {
+	if p == nil || p.proc == nil {
+		return nil
+	}
+	return p.proc.Kill()
+}
+
+func (p *realProcess) Signal(sig os.Signal) error {
+	if p == nil || p.proc == nil {
+		return nil
+	}
+	return p.proc.Signal(sig)
 }
 
 // Config holds CLI configuration
@@ -85,6 +167,7 @@ type TaskResult struct {
 	Message   string `json:"message"`
 	SessionID string `json:"session_id"`
 	Error     string `json:"error"`
+	LogPath   string `json:"log_path"`
 }
 
 func parseParallelConfig(data []byte) (*ParallelConfig, error) {
@@ -254,6 +337,27 @@ func executeConcurrent(layers [][]TaskSpec, timeout int) []TaskResult {
 	failed := make(map[string]TaskResult, totalTasks)
 	resultsCh := make(chan TaskResult, totalTasks)
 
+	var startPrintMu sync.Mutex
+	bannerPrinted := false
+
+	printTaskStart := func(taskID string) {
+		logger := activeLogger()
+		if logger == nil {
+			return
+		}
+		path := logger.Path()
+		if path == "" {
+			return
+		}
+		startPrintMu.Lock()
+		if !bannerPrinted {
+			fmt.Fprintln(os.Stderr, "=== Starting Parallel Execution ===")
+			bannerPrinted = true
+		}
+		fmt.Fprintf(os.Stderr, "Task %s: Log: %s\n", taskID, path)
+		startPrintMu.Unlock()
+	}
+
 	for _, layer := range layers {
 		var wg sync.WaitGroup
 		executed := 0
@@ -275,6 +379,7 @@ func executeConcurrent(layers [][]TaskSpec, timeout int) []TaskResult {
 						resultsCh <- TaskResult{TaskID: ts.ID, ExitCode: 1, Error: fmt.Sprintf("panic: %v", r)}
 					}
 				}()
+				printTaskStart(ts.ID)
 				resultsCh <- runCodexTaskFn(ts, timeout)
 			}(task)
 		}
@@ -340,6 +445,9 @@ func generateFinalOutput(results []TaskResult) string {
 		if res.SessionID != "" {
 			sb.WriteString(fmt.Sprintf("Session: %s\n", res.SessionID))
 		}
+		if res.LogPath != "" {
+			sb.WriteString(fmt.Sprintf("Log: %s\n", res.LogPath))
+		}
 		if res.Message != "" {
 			sb.WriteString(fmt.Sprintf("\n%s\n", res.Message))
 		}
@@ -383,6 +491,8 @@ func runStartupCleanup() {
 
 // run is the main logic, returns exit code for testability
 func run() (exitCode int) {
+	var startupCleanupWG sync.WaitGroup
+
 	// Handle --version and --help first (no logger needed)
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
@@ -421,9 +531,16 @@ func run() (exitCode int) {
 		}
 	}()
 	defer runCleanupHook()
+	defer startupCleanupWG.Wait()
 
-	// Run cleanup asynchronously to avoid blocking startup
-	go runStartupCleanup()
+	// Run cleanup asynchronously to avoid blocking startup but wait before exit
+	if cleanupLogsFn != nil {
+		startupCleanupWG.Add(1)
+		go func() {
+			defer startupCleanupWG.Done()
+			runStartupCleanup()
+		}()
+	}
 
 	// Handle remaining commands
 	if len(os.Args) > 1 {
@@ -525,7 +642,20 @@ func run() (exitCode int) {
 	fmt.Fprintf(os.Stderr, "[codex-wrapper]\n")
 	fmt.Fprintf(os.Stderr, "  Command: %s %s\n", codexCommand, strings.Join(codexArgs, " "))
 	fmt.Fprintf(os.Stderr, "  PID: %d\n", os.Getpid())
-	fmt.Fprintf(os.Stderr, "  Log: %s\n", logger.Path())
+	logPath := ""
+	if logger != nil {
+		logPath = logger.Path()
+	}
+	fmt.Fprintf(os.Stderr, "  Log: %s\n", logPath)
+	printedLogPath := logPath
+	printLogPath := func(path string) {
+		if path == "" || path == printedLogPath {
+			return
+		}
+		fmt.Fprintf(os.Stderr, "[codex-wrapper]\n")
+		fmt.Fprintf(os.Stderr, "  Log: %s\n", path)
+		printedLogPath = path
+	}
 
 	if useStdin {
 		var reasons []string
@@ -572,6 +702,7 @@ func run() (exitCode int) {
 	}
 
 	result := runCodexTask(taskSpec, false, cfg.Timeout)
+	printLogPath(result.LogPath)
 
 	if result.ExitCode != 0 {
 		return result.ExitCode
@@ -710,8 +841,8 @@ func runCodexProcess(parentCtx context.Context, codexArgs []string, taskText str
 	return res.Message, res.SessionID, res.ExitCode
 }
 
-func runCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, customArgs []string, useCustomArgs bool, silent bool, timeoutSec int) TaskResult {
-	result := TaskResult{TaskID: taskSpec.ID}
+func runCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, customArgs []string, useCustomArgs bool, silent bool, timeoutSec int) (result TaskResult) {
+	result.TaskID = taskSpec.ID
 
 	cfg := &Config{
 		Mode:      taskSpec.Mode,
@@ -744,6 +875,15 @@ func runCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, custo
 			return msg
 		}
 		return fmt.Sprintf("[Task: %s] %s", taskSpec.ID, msg)
+	}
+
+	captureLogPath := func() {
+		if result.LogPath != "" {
+			return
+		}
+		if logger := activeLogger(); logger != nil {
+			result.LogPath = logger.Path()
+		}
 	}
 
 	var logInfoFn func(string)
@@ -786,6 +926,7 @@ func runCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, custo
 		}
 	}
 	defer func() {
+		captureLogPath()
 		if tempLogger != nil {
 			closeLogger()
 		}
@@ -810,7 +951,7 @@ func runCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, custo
 		return fmt.Sprintf("%s; stderr: %s", msg, stderrBuf.String())
 	}
 
-	cmd := commandContext(ctx, codexCommand, codexArgs...)
+	cmd := newCommandRunner(ctx, codexCommand, codexArgs...)
 
 	stderrWriters := []io.Writer{stderrBuf}
 	if stderrLogger != nil {
@@ -820,9 +961,9 @@ func runCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, custo
 		stderrWriters = append([]io.Writer{os.Stderr}, stderrWriters...)
 	}
 	if len(stderrWriters) == 1 {
-		cmd.Stderr = stderrWriters[0]
+		cmd.SetStderr(stderrWriters[0])
 	} else {
-		cmd.Stderr = io.MultiWriter(stderrWriters...)
+		cmd.SetStderr(io.MultiWriter(stderrWriters...))
 	}
 
 	var stdinPipe io.WriteCloser
@@ -865,7 +1006,9 @@ func runCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, custo
 		return result
 	}
 
-	logInfoFn(fmt.Sprintf("Starting codex with PID: %d", cmd.Process.Pid))
+	if proc := cmd.Process(); proc != nil {
+		logInfoFn(fmt.Sprintf("Starting codex with PID: %d", proc.Pid()))
+	}
 	if logger := activeLogger(); logger != nil {
 		logInfoFn(fmt.Sprintf("Log capturing to: %s", logger.Path()))
 	}
@@ -888,22 +1031,104 @@ func runCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, custo
 		parseCh <- parseResult{message: msg, threadID: tid}
 	}()
 
-	var waitErr error
-	var forceKillTimer *time.Timer
-
-	select {
-	case waitErr = <-waitCh:
-	case <-ctx.Done():
-		logErrorFn(cancelReason(ctx))
-		forceKillTimer = terminateProcess(cmd)
-		waitErr = <-waitCh
+	var stdoutCloseOnce sync.Once
+	var stdoutDrainCloseOnce sync.Once
+	closeStdout := func(reason string) {
+		var once *sync.Once
+		if reason == stdoutCloseReasonDrain {
+			once = &stdoutDrainCloseOnce
+		} else {
+			once = &stdoutCloseOnce
+		}
+		once.Do(func() {
+			if stdout == nil {
+				return
+			}
+			var closeErr error
+			switch c := stdout.(type) {
+			case interface{ CloseWithReason(string) error }:
+				closeErr = c.CloseWithReason(reason)
+			case interface{ CloseWithError(error) error }:
+				closeErr = c.CloseWithError(nil)
+			default:
+				closeErr = stdout.Close()
+			}
+			if closeErr != nil {
+				logWarnFn(fmt.Sprintf("Failed to close stdout pipe: %v", closeErr))
+			}
+		})
 	}
+
+	var waitErr error
+	var forceKillTimer *forceKillTimer
+
+	var parsed parseResult
+
+	var drainTimer *time.Timer
+	var drainTimerCh <-chan time.Time
+	startDrainTimer := func() {
+		if drainTimer != nil {
+			return
+		}
+		timer := time.NewTimer(stdoutDrainTimeout)
+		drainTimer = timer
+		drainTimerCh = timer.C
+	}
+	stopDrainTimer := func() {
+		if drainTimer == nil {
+			return
+		}
+		if !drainTimer.Stop() {
+			select {
+			case <-drainTimerCh:
+			default:
+			}
+		}
+		drainTimer = nil
+		drainTimerCh = nil
+	}
+
+	waitDone := false
+	parseDone := false
+	ctxLogged := false
+
+	for !waitDone || !parseDone {
+		select {
+		case waitErr = <-waitCh:
+			waitDone = true
+			waitCh = nil
+			closeStdout(stdoutCloseReasonWait)
+			if !parseDone {
+				startDrainTimer()
+			}
+		case parsed = <-parseCh:
+			parseDone = true
+			parseCh = nil
+			stopDrainTimer()
+		case <-ctx.Done():
+			if !ctxLogged {
+				logErrorFn(cancelReason(ctx))
+				ctxLogged = true
+				if forceKillTimer == nil {
+					forceKillTimer = terminateCommandFn(cmd)
+				}
+			}
+			closeStdout(stdoutCloseReasonCtx)
+			if !parseDone {
+				startDrainTimer()
+			}
+		case <-drainTimerCh:
+			logWarnFn("stdout did not drain within 5s; forcing close")
+			closeStdout(stdoutCloseReasonDrain)
+			stopDrainTimer()
+		}
+	}
+
+	stopDrainTimer()
 
 	if forceKillTimer != nil {
-		forceKillTimer.Stop()
+		forceKillTimer.stop()
 	}
-
-	parsed := <-parseCh
 
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		if errors.Is(ctxErr, context.DeadlineExceeded) {
@@ -1043,6 +1268,51 @@ func terminateProcess(cmd *exec.Cmd) *time.Timer {
 			_ = cmd.Process.Kill()
 		}
 	})
+}
+
+type forceKillTimer struct {
+	timer   *time.Timer
+	done    chan struct{}
+	stopped atomic.Bool
+	drained atomic.Bool
+}
+
+func (t *forceKillTimer) stop() {
+	if t == nil || t.timer == nil {
+		return
+	}
+	if !t.timer.Stop() {
+		<-t.done
+		t.drained.Store(true)
+	}
+	t.stopped.Store(true)
+}
+
+func terminateCommand(cmd commandRunner) *forceKillTimer {
+	if cmd == nil {
+		return nil
+	}
+	proc := cmd.Process()
+	if proc == nil {
+		return nil
+	}
+
+	if runtime.GOOS == "windows" {
+		_ = proc.Kill()
+		return nil
+	}
+
+	_ = proc.Signal(syscall.SIGTERM)
+
+	done := make(chan struct{}, 1)
+	timer := time.AfterFunc(time.Duration(forceKillDelay.Load())*time.Second, func() {
+		if p := cmd.Process(); p != nil {
+			_ = p.Kill()
+		}
+		done <- struct{}{}
+	})
+
+	return &forceKillTimer{timer: timer, done: done}
 }
 
 func parseJSONStream(r io.Reader) (message, threadID string) {
