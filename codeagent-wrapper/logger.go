@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,22 +19,25 @@ import (
 // It is intentionally minimal: a buffered channel + single worker goroutine
 // to avoid contention while keeping ordering guarantees.
 type Logger struct {
-	path      string
-	file      *os.File
-	writer    *bufio.Writer
-	ch        chan logEntry
-	flushReq  chan chan struct{}
-	done      chan struct{}
-	closed    atomic.Bool
-	closeOnce sync.Once
-	workerWG  sync.WaitGroup
-	pendingWG sync.WaitGroup
-	flushMu   sync.Mutex
+	path         string
+	file         *os.File
+	writer       *bufio.Writer
+	ch           chan logEntry
+	flushReq     chan chan struct{}
+	done         chan struct{}
+	closed       atomic.Bool
+	closeOnce    sync.Once
+	workerWG     sync.WaitGroup
+	pendingWG    sync.WaitGroup
+	flushMu      sync.Mutex
+	workerErr    error
+	errorEntries []string // Cache of recent ERROR/WARN entries
+	errorMu      sync.Mutex
 }
 
 type logEntry struct {
-	level string
-	msg   string
+	msg     string
+	isError bool // true for ERROR or WARN levels
 }
 
 // CleanupStats captures the outcome of a cleanupOldLogs run.
@@ -55,6 +59,10 @@ var (
 	evalSymlinksFn      = filepath.EvalSymlinks
 )
 
+const maxLogSuffixLen = 64
+
+var logSuffixCounter atomic.Uint64
+
 // NewLogger creates the async logger and starts the worker goroutine.
 // The log file is created under os.TempDir() using the required naming scheme.
 func NewLogger() (*Logger, error) {
@@ -64,15 +72,24 @@ func NewLogger() (*Logger, error) {
 // NewLoggerWithSuffix creates a logger with an optional suffix in the filename.
 // Useful for tests that need isolated log files within the same process.
 func NewLoggerWithSuffix(suffix string) (*Logger, error) {
-	filename := fmt.Sprintf("codex-wrapper-%d", os.Getpid())
+	pid := os.Getpid()
+	filename := fmt.Sprintf("%s-%d", primaryLogPrefix(), pid)
+	var safeSuffix string
 	if suffix != "" {
-		filename += "-" + suffix
+		safeSuffix = sanitizeLogSuffix(suffix)
+	}
+	if safeSuffix != "" {
+		filename += "-" + safeSuffix
 	}
 	filename += ".log"
 
-	path := filepath.Join(os.TempDir(), filename)
+	path := filepath.Clean(filepath.Join(os.TempDir(), filename))
 
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
 	}
@@ -90,6 +107,73 @@ func NewLoggerWithSuffix(suffix string) (*Logger, error) {
 	go l.run()
 
 	return l, nil
+}
+
+func sanitizeLogSuffix(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return fallbackLogSuffix()
+	}
+
+	var b strings.Builder
+	changed := false
+	for _, r := range trimmed {
+		if isSafeLogRune(r) {
+			b.WriteRune(r)
+		} else {
+			changed = true
+			b.WriteByte('-')
+		}
+		if b.Len() >= maxLogSuffixLen {
+			changed = true
+			break
+		}
+	}
+
+	sanitized := strings.Trim(b.String(), "-.")
+	if sanitized != b.String() {
+		changed = true // Mark if trim removed any characters
+	}
+	if sanitized == "" {
+		return fallbackLogSuffix()
+	}
+
+	if changed || len(sanitized) > maxLogSuffixLen {
+		hash := crc32.ChecksumIEEE([]byte(trimmed))
+		hashStr := fmt.Sprintf("%x", hash)
+
+		maxPrefix := maxLogSuffixLen - len(hashStr) - 1
+		if maxPrefix < 1 {
+			maxPrefix = 1
+		}
+		if len(sanitized) > maxPrefix {
+			sanitized = sanitized[:maxPrefix]
+		}
+
+		sanitized = fmt.Sprintf("%s-%s", sanitized, hashStr)
+	}
+
+	return sanitized
+}
+
+func fallbackLogSuffix() string {
+	next := logSuffixCounter.Add(1)
+	return fmt.Sprintf("task-%d", next)
+}
+
+func isSafeLogRune(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z':
+		return true
+	case r >= 'A' && r <= 'Z':
+		return true
+	case r >= '0' && r <= '9':
+		return true
+	case r == '-', r == '_', r == '.':
+		return true
+	default:
+		return false
+	}
 }
 
 // Path returns the underlying log file path (useful for tests/inspection).
@@ -112,10 +196,11 @@ func (l *Logger) Debug(msg string) { l.log("DEBUG", msg) }
 // Error logs at ERROR level.
 func (l *Logger) Error(msg string) { l.log("ERROR", msg) }
 
-// Close stops the worker and syncs the log file.
+// Close signals the worker to flush and close the log file.
 // The log file is NOT removed, allowing inspection after program exit.
 // It is safe to call multiple times.
-// Returns after a 5-second timeout if worker doesn't stop gracefully.
+// Waits up to CODEAGENT_LOGGER_CLOSE_TIMEOUT_MS (default: 5000) for shutdown; set to 0 to wait indefinitely.
+// Returns an error if shutdown doesn't complete within the timeout.
 func (l *Logger) Close() error {
 	if l == nil {
 		return nil
@@ -126,40 +211,49 @@ func (l *Logger) Close() error {
 	l.closeOnce.Do(func() {
 		l.closed.Store(true)
 		close(l.done)
-		close(l.ch)
 
-		// Wait for worker with timeout
+		timeout := loggerCloseTimeout()
 		workerDone := make(chan struct{})
 		go func() {
 			l.workerWG.Wait()
 			close(workerDone)
 		}()
 
-		select {
-		case <-workerDone:
-			// Worker stopped gracefully
-		case <-time.After(5 * time.Second):
-			// Worker timeout - proceed with cleanup anyway
-			closeErr = fmt.Errorf("logger worker timeout during close")
+		if timeout > 0 {
+			select {
+			case <-workerDone:
+				// Worker stopped gracefully
+			case <-time.After(timeout):
+				closeErr = fmt.Errorf("logger worker timeout during close")
+				return
+			}
+		} else {
+			<-workerDone
 		}
 
-		if err := l.writer.Flush(); err != nil && closeErr == nil {
-			closeErr = err
+		if l.workerErr != nil && closeErr == nil {
+			closeErr = l.workerErr
 		}
-
-		if err := l.file.Sync(); err != nil && closeErr == nil {
-			closeErr = err
-		}
-
-		if err := l.file.Close(); err != nil && closeErr == nil {
-			closeErr = err
-		}
-
-		// Log file is kept for debugging - NOT removed
-		// Users can manually clean up /tmp/codex-wrapper-*.log files
 	})
 
 	return closeErr
+}
+
+func loggerCloseTimeout() time.Duration {
+	const defaultTimeout = 5 * time.Second
+
+	raw := strings.TrimSpace(os.Getenv("CODEAGENT_LOGGER_CLOSE_TIMEOUT_MS"))
+	if raw == "" {
+		return defaultTimeout
+	}
+	ms, err := strconv.Atoi(raw)
+	if err != nil {
+		return defaultTimeout
+	}
+	if ms <= 0 {
+		return 0
+	}
+	return time.Duration(ms) * time.Millisecond
 }
 
 // RemoveLogFile removes the log file. Should only be called after Close().
@@ -168,6 +262,31 @@ func (l *Logger) RemoveLogFile() error {
 		return nil
 	}
 	return os.Remove(l.path)
+}
+
+// ExtractRecentErrors returns the most recent ERROR and WARN entries from memory cache.
+// Returns up to maxEntries entries in chronological order.
+func (l *Logger) ExtractRecentErrors(maxEntries int) []string {
+	if l == nil || maxEntries <= 0 {
+		return nil
+	}
+
+	l.errorMu.Lock()
+	defer l.errorMu.Unlock()
+
+	if len(l.errorEntries) == 0 {
+		return nil
+	}
+
+	// Return last N entries
+	start := 0
+	if len(l.errorEntries) > maxEntries {
+		start = len(l.errorEntries) - maxEntries
+	}
+
+	result := make([]string, len(l.errorEntries)-start)
+	copy(result, l.errorEntries[start:])
+	return result
 }
 
 // Flush waits for all pending log entries to be written. Primarily for tests.
@@ -224,7 +343,8 @@ func (l *Logger) log(level, msg string) {
 		return
 	}
 
-	entry := logEntry{level: level, msg: msg}
+	isError := level == "WARN" || level == "ERROR"
+	entry := logEntry{msg: msg, isError: isError}
 	l.flushMu.Lock()
 	l.pendingWG.Add(1)
 	l.flushMu.Unlock()
@@ -245,32 +365,72 @@ func (l *Logger) run() {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
+	writeEntry := func(entry logEntry) {
+		timestamp := time.Now().Format("2006-01-02 15:04:05.000")
+		fmt.Fprintf(l.writer, "[%s] %s\n", timestamp, entry.msg)
+
+		// Cache error/warn entries in memory for fast extraction
+		if entry.isError {
+			l.errorMu.Lock()
+			l.errorEntries = append(l.errorEntries, entry.msg)
+			if len(l.errorEntries) > 100 { // Keep last 100
+				l.errorEntries = l.errorEntries[1:]
+			}
+			l.errorMu.Unlock()
+		}
+
+		l.pendingWG.Done()
+	}
+
+	finalize := func() {
+		if err := l.writer.Flush(); err != nil && l.workerErr == nil {
+			l.workerErr = err
+		}
+		if err := l.file.Sync(); err != nil && l.workerErr == nil {
+			l.workerErr = err
+		}
+		if err := l.file.Close(); err != nil && l.workerErr == nil {
+			l.workerErr = err
+		}
+	}
+
 	for {
 		select {
 		case entry, ok := <-l.ch:
 			if !ok {
-				// Channel closed, final flush
-				l.writer.Flush()
+				finalize()
 				return
 			}
-			timestamp := time.Now().Format("2006-01-02 15:04:05.000")
-			pid := os.Getpid()
-			fmt.Fprintf(l.writer, "[%s] [PID:%d] %s: %s\n", timestamp, pid, entry.level, entry.msg)
-			l.pendingWG.Done()
+			writeEntry(entry)
 
 		case <-ticker.C:
-			l.writer.Flush()
+			_ = l.writer.Flush()
 
 		case flushDone := <-l.flushReq:
 			// Explicit flush request - flush writer and sync to disk
-			l.writer.Flush()
-			l.file.Sync()
+			_ = l.writer.Flush()
+			_ = l.file.Sync()
 			close(flushDone)
+
+		case <-l.done:
+			for {
+				select {
+				case entry, ok := <-l.ch:
+					if !ok {
+						finalize()
+						return
+					}
+					writeEntry(entry)
+				default:
+					finalize()
+					return
+				}
+			}
 		}
 	}
 }
 
-// cleanupOldLogs scans os.TempDir() for codex-wrapper-*.log files and removes those
+// cleanupOldLogs scans os.TempDir() for wrapper log files and removes those
 // whose owning process is no longer running (i.e., orphaned logs).
 // It includes safety checks for:
 // - PID reuse: Compares file modification time with process start time
@@ -278,12 +438,28 @@ func (l *Logger) run() {
 func cleanupOldLogs() (CleanupStats, error) {
 	var stats CleanupStats
 	tempDir := os.TempDir()
-	pattern := filepath.Join(tempDir, "codex-wrapper-*.log")
 
-	matches, err := globLogFiles(pattern)
-	if err != nil {
-		logWarn(fmt.Sprintf("cleanupOldLogs: failed to list logs: %v", err))
-		return stats, fmt.Errorf("cleanupOldLogs: %w", err)
+	prefixes := logPrefixes()
+	if len(prefixes) == 0 {
+		prefixes = []string{defaultWrapperName}
+	}
+
+	seen := make(map[string]struct{})
+	var matches []string
+	for _, prefix := range prefixes {
+		pattern := filepath.Join(tempDir, fmt.Sprintf("%s-*.log", prefix))
+		found, err := globLogFiles(pattern)
+		if err != nil {
+			logWarn(fmt.Sprintf("cleanupOldLogs: failed to list logs: %v", err))
+			return stats, fmt.Errorf("cleanupOldLogs: %w", err)
+		}
+		for _, path := range found {
+			if _, ok := seen[path]; ok {
+				continue
+			}
+			seen[path] = struct{}{}
+			matches = append(matches, path)
+		}
 	}
 
 	var removeErr error
@@ -428,28 +604,60 @@ func isPIDReused(logPath string, pid int) bool {
 
 func parsePIDFromLog(path string) (int, bool) {
 	name := filepath.Base(path)
-	if !strings.HasPrefix(name, "codex-wrapper-") || !strings.HasSuffix(name, ".log") {
-		return 0, false
+	prefixes := logPrefixes()
+	if len(prefixes) == 0 {
+		prefixes = []string{defaultWrapperName}
 	}
 
-	core := strings.TrimSuffix(strings.TrimPrefix(name, "codex-wrapper-"), ".log")
-	if core == "" {
-		return 0, false
+	for _, prefix := range prefixes {
+		prefixWithDash := fmt.Sprintf("%s-", prefix)
+		if !strings.HasPrefix(name, prefixWithDash) || !strings.HasSuffix(name, ".log") {
+			continue
+		}
+
+		core := strings.TrimSuffix(strings.TrimPrefix(name, prefixWithDash), ".log")
+		if core == "" {
+			continue
+		}
+
+		pidPart := core
+		if idx := strings.IndexRune(core, '-'); idx != -1 {
+			pidPart = core[:idx]
+		}
+
+		if pidPart == "" {
+			continue
+		}
+
+		pid, err := strconv.Atoi(pidPart)
+		if err != nil || pid <= 0 {
+			continue
+		}
+		return pid, true
 	}
 
-	pidPart := core
-	if idx := strings.IndexRune(core, '-'); idx != -1 {
-		pidPart = core[:idx]
-	}
+	return 0, false
+}
 
-	if pidPart == "" {
-		return 0, false
+func logConcurrencyPlanning(limit, total int) {
+	logger := activeLogger()
+	if logger == nil {
+		return
 	}
+	logger.Info(fmt.Sprintf("parallel: worker_limit=%s total_tasks=%d", renderWorkerLimit(limit), total))
+}
 
-	pid, err := strconv.Atoi(pidPart)
-	if err != nil || pid <= 0 {
-		return 0, false
+func logConcurrencyState(event, taskID string, active, limit int) {
+	logger := activeLogger()
+	if logger == nil {
+		return
 	}
+	logger.Debug(fmt.Sprintf("parallel: %s task=%s active=%d limit=%s", event, taskID, active, renderWorkerLimit(limit)))
+}
 
-	return pid, true
+func renderWorkerLimit(limit int) string {
+	if limit <= 0 {
+		return "unbounded"
+	}
+	return strconv.Itoa(limit)
 }

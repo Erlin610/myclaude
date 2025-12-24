@@ -1,8 +1,7 @@
 # Claude Code Multi-Agent Workflow System Makefile
 # Quick deployment for BMAD and Requirements workflows
 
-.PHONY: help install deploy-bmad deploy-requirements deploy-essentials deploy-advanced deploy-alin deploy-all deploy-commands deploy-agents clean test install-workflow alin-dev-to alin-dev-to-cc alin-dev-to-droid
-.ONESHELL:
+.PHONY: help install deploy-bmad deploy-requirements deploy-essentials deploy-advanced deploy-all deploy-commands deploy-agents clean test changelog
 
 # Default target
 help:
@@ -27,6 +26,7 @@ help:
 	@echo "  alin-dev-to-droid    - Convenience: install alin-dev to TARGET for Droid"
 	@echo "  test-bmad            - Test BMAD workflow with sample"
 	@echo "  test-requirements    - Test Requirements workflow with sample"
+	@echo "  changelog            - Update CHANGELOG.md using git-cliff"
 	@echo "  clean                - Clean generated artifacts"
 	@echo "  help                 - Show this help message"
 	@echo ""
@@ -158,3 +158,17 @@ all: deploy-all
 version:
 	@echo "Claude Code Multi-Agent Workflow System v3.1"
 	@echo "BMAD + Requirements-Driven Development"
+
+# Update CHANGELOG.md using git-cliff
+changelog:
+	@echo "📝 Updating CHANGELOG.md with git-cliff..."
+	@if ! command -v git-cliff > /dev/null 2>&1; then \
+		echo "❌ git-cliff not found. Installing via Homebrew..."; \
+		brew install git-cliff; \
+	fi
+	@git-cliff -o CHANGELOG.md
+	@echo "✅ CHANGELOG.md updated successfully!"
+	@echo ""
+	@echo "Preview the changes:"
+	@echo "  git diff CHANGELOG.md"
+

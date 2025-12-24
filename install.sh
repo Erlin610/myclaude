@@ -1,12 +1,15 @@
 #!/bin/bash
 set -e
 
-echo "⚠️  WARNING: install.sh is LEGACY and will be removed in future versions."
-echo "Please use the new installation method:"
-echo "  python3 install.py --install-dir ~/.claude"
-echo ""
-echo "Continuing with legacy installation in 5 seconds..."
-sleep 5
+if [ -z "${SKIP_WARNING:-}" ]; then
+  echo "⚠️  WARNING: install.sh is LEGACY and will be removed in future versions."
+  echo "Please use the new installation method:"
+  echo "  python3 install.py --install-dir ~/.claude"
+  echo ""
+  echo "Set SKIP_WARNING=1 to bypass this message"
+  echo "Continuing with legacy installation in 5 seconds..."
+  sleep 5
+fi
 
 # Detect platform
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -22,32 +25,34 @@ esac
 # Build download URL
 REPO="cexll/myclaude"
 VERSION="latest"
-BINARY_NAME="codex-wrapper-${OS}-${ARCH}"
+BINARY_NAME="codeagent-wrapper-${OS}-${ARCH}"
 URL="https://github.com/${REPO}/releases/${VERSION}/download/${BINARY_NAME}"
 
-echo "Downloading codex-wrapper from ${URL}..."
-if ! curl -fsSL "$URL" -o /tmp/codex-wrapper; then
+echo "Downloading codeagent-wrapper from ${URL}..."
+if ! curl -fsSL "$URL" -o /tmp/codeagent-wrapper; then
     echo "ERROR: failed to download binary" >&2
     exit 1
 fi
 
-mkdir -p "$HOME/bin"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.claude}"
+BIN_DIR="${INSTALL_DIR}/bin"
+mkdir -p "$BIN_DIR"
 
-mv /tmp/codex-wrapper "$HOME/bin/codex-wrapper"
-chmod +x "$HOME/bin/codex-wrapper"
+mv /tmp/codeagent-wrapper "${BIN_DIR}/codeagent-wrapper"
+chmod +x "${BIN_DIR}/codeagent-wrapper"
 
-if "$HOME/bin/codex-wrapper" --version >/dev/null 2>&1; then
-    echo "codex-wrapper installed successfully to ~/bin/codex-wrapper"
+if "${BIN_DIR}/codeagent-wrapper" --version >/dev/null 2>&1; then
+    echo "codeagent-wrapper installed successfully to ${BIN_DIR}/codeagent-wrapper"
 else
     echo "ERROR: installation verification failed" >&2
     exit 1
 fi
 
-if [[ ":$PATH:" != *":$HOME/bin:"* ]]; then
+if [[ ":$PATH:" != *":${BIN_DIR}:"* ]]; then
     echo ""
-    echo "WARNING: ~/bin is not in your PATH"
-    echo "Add this line to your ~/.bashrc or ~/.zshrc:"
+    echo "WARNING: ${BIN_DIR} is not in your PATH"
+    echo "Add this line to your ~/.bashrc or ~/.zshrc (then restart your shell):"
     echo ""
-    echo "    export PATH=\"\$HOME/bin:\$PATH\""
+    echo "    export PATH=\"${BIN_DIR}:\$PATH\""
     echo ""
 fi

@@ -166,7 +166,7 @@ id: E
 ---CONTENT---
 task-e`
 	stdinReader = bytes.NewReader([]byte(input))
-	os.Args = []string{"codex-wrapper", "--parallel"}
+	os.Args = []string{"codeagent-wrapper", "--parallel"}
 
 	var mu sync.Mutex
 	starts := make(map[string]time.Time)
@@ -269,7 +269,7 @@ dependencies: A
 ---CONTENT---
 b`
 	stdinReader = bytes.NewReader([]byte(input))
-	os.Args = []string{"codex-wrapper", "--parallel"}
+	os.Args = []string{"codeagent-wrapper", "--parallel"}
 
 	exitCode := 0
 	output := captureStdout(t, func() {
@@ -426,10 +426,11 @@ ok-d`
 		t.Fatalf("expected startup banner in stderr, got:\n%s", stderrOut)
 	}
 
+	// After parallel log isolation fix, each task has its own log file
 	expectedLines := map[string]struct{}{
-		fmt.Sprintf("Task a: Log: %s", expectedLog): {},
-		fmt.Sprintf("Task b: Log: %s", expectedLog): {},
-		fmt.Sprintf("Task d: Log: %s", expectedLog): {},
+		fmt.Sprintf("Task a: Log: %s", filepath.Join(tempDir, fmt.Sprintf("codex-wrapper-%d-a.log", os.Getpid()))): {},
+		fmt.Sprintf("Task b: Log: %s", filepath.Join(tempDir, fmt.Sprintf("codex-wrapper-%d-b.log", os.Getpid()))): {},
+		fmt.Sprintf("Task d: Log: %s", filepath.Join(tempDir, fmt.Sprintf("codex-wrapper-%d-d.log", os.Getpid()))): {},
 	}
 
 	if len(taskLines) != len(expectedLines) {
@@ -511,7 +512,7 @@ id: E
 ---CONTENT---
 ok-e`
 	stdinReader = bytes.NewReader([]byte(input))
-	os.Args = []string{"codex-wrapper", "--parallel"}
+	os.Args = []string{"codeagent-wrapper", "--parallel"}
 
 	var exitCode int
 	output := captureStdout(t, func() {
@@ -583,7 +584,7 @@ id: T
 ---CONTENT---
 slow`
 	stdinReader = bytes.NewReader([]byte(input))
-	os.Args = []string{"codex-wrapper", "--parallel"}
+	os.Args = []string{"codeagent-wrapper", "--parallel"}
 
 	exitCode := 0
 	output := captureStdout(t, func() {
