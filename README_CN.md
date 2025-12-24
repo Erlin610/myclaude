@@ -1,24 +1,24 @@
 # Claude Code 多智能体工作流系统
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Claude Code](https://img.shields.io/badge/Claude-Code-blue)](https://claude.ai/code)
-[![Version](https://img.shields.io/badge/Version-5.0-green)](https://github.com/cexll/myclaude)
+[![Version](https://img.shields.io/badge/Version-5.2-green)](https://github.com/cexll/myclaude)
 
-> AI 驱动的开发自动化 - Claude Code + Codex 协作
+> AI 驱动的开发自动化 - 多后端执行架构 (Codex/Claude/Gemini)
 
-## 核心概念：Claude Code + Codex
+## 核心概念：多后端架构
 
-本系统采用**双智能体架构**：
+本系统采用**双智能体架构**与可插拔 AI 后端：
 
 | 角色 | 智能体 | 职责 |
 |------|-------|------|
 | **编排者** | Claude Code | 规划、上下文收集、验证、用户交互 |
-| **执行者** | Codex | 代码编辑、测试执行、文件操作 |
+| **执行者** | codeagent-wrapper | 代码编辑、测试执行（Codex/Claude/Gemini 后端）|
 
 **为什么分离？**
 - Claude Code 擅长理解上下文和编排复杂工作流
-- Codex 擅长专注的代码生成和执行
-- 两者结合效果优于单独使用
+- 专业后端（Codex 擅长代码、Claude 擅长推理、Gemini 擅长原型）专注执行
+- 通过 `--backend codex|claude|gemini` 匹配模型与任务
 
 ## 快速开始（windows上请在Powershell中执行）
 
@@ -152,14 +152,38 @@ python3 install.py --force
 
 ```
 ~/.claude/
-├── CLAUDE.md              # 核心指令和角色定义
-├── commands/              # 斜杠命令 (/dev, /code 等)
-├── agents/                # 智能体定义
+├── bin/
+│   └── codeagent-wrapper    # 主可执行文件
+├── CLAUDE.md                # 核心指令和角色定义
+├── commands/                # 斜杠命令 (/dev, /code 等)
+├── agents/                  # 智能体定义
 ├── skills/
 │   └── codex/
-│       └── SKILL.md       # Codex 集成技能
-└── installed_modules.json # 安装状态
+│       └── SKILL.md         # Codex 集成技能
+├── config.json              # 配置文件
+└── installed_modules.json   # 安装状态
 ```
+
+### 自定义安装目录
+
+默认情况下，myclaude 安装到 `~/.claude`。您可以使用 `INSTALL_DIR` 环境变量自定义安装目录：
+
+```bash
+# 安装到自定义目录
+INSTALL_DIR=/opt/myclaude bash install.sh
+
+# 相应更新您的 PATH
+export PATH="/opt/myclaude/bin:$PATH"
+```
+
+**目录结构：**
+- `$INSTALL_DIR/bin/` - codeagent-wrapper 可执行文件
+- `$INSTALL_DIR/skills/` - 技能定义
+- `$INSTALL_DIR/config.json` - 配置文件
+- `$INSTALL_DIR/commands/` - 斜杠命令定义
+- `$INSTALL_DIR/agents/` - 智能体定义
+
+**注意：** 使用自定义安装目录时，请确保将 `$INSTALL_DIR/bin` 添加到您的 `PATH` 环境变量中。
 
 ### 配置
 
@@ -201,7 +225,7 @@ python3 install.py --force
 
 ```bash
 # 通过技能调用 Codex
-codex-wrapper - <<'EOF'
+codeagent-wrapper - <<'EOF'
 在 @src/auth.ts 中实现 JWT 验证
 EOF
 ```
@@ -209,7 +233,7 @@ EOF
 ### 并行执行
 
 ```bash
-codex-wrapper --parallel <<'EOF'
+codeagent-wrapper --parallel <<'EOF'
 ---TASK---
 id: backend_api
 workdir: /project/backend
@@ -237,7 +261,7 @@ bash install.sh
 
 #### Windows 系统
 
-Windows 系统会将 `codex-wrapper.exe` 安装到 `%USERPROFILE%\bin`。
+Windows 系统会将 `codeagent-wrapper.exe` 安装到 `%USERPROFILE%\bin`。
 
 ```powershell
 # PowerShell（推荐）
@@ -284,7 +308,7 @@ setx PATH "%USERPROFILE%\bin;%PATH%"
 **Codex wrapper 未找到：**
 ```bash
 # 检查 PATH
-echo $PATH | grep -q "$HOME/bin" || echo 'export PATH="$HOME/bin:$PATH"' >> ~/.zshrc
+echo $PATH | grep -q "$HOME/.claude/bin" || echo 'export PATH="$HOME/.claude/bin:$PATH"' >> ~/.zshrc
 
 # 重新安装
 bash install.sh
@@ -308,7 +332,7 @@ python3 install.py --module dev --force
 
 ## 许可证
 
-MIT License - 查看 [LICENSE](LICENSE)
+AGPL-3.0 License - 查看 [LICENSE](LICENSE)
 
 ## 支持
 
