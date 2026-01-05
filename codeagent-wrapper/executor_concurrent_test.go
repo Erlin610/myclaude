@@ -268,9 +268,15 @@ func TestExecutorHelperCoverage(t *testing.T) {
 		if !strings.Contains(out, "ok") || !strings.Contains(out, "fail") {
 			t.Fatalf("unexpected summary output: %s", out)
 		}
+		// Test summary mode (default) - should have new format with ### headers
 		out = generateFinalOutput([]TaskResult{{TaskID: "rich", ExitCode: 0, SessionID: "sess", LogPath: "/tmp/log", Message: "hello"}})
+		if !strings.Contains(out, "### rich") {
+			t.Fatalf("summary output missing task header: %s", out)
+		}
+		// Test full output mode - should have Session and Message
+		out = generateFinalOutputWithMode([]TaskResult{{TaskID: "rich", ExitCode: 0, SessionID: "sess", LogPath: "/tmp/log", Message: "hello"}}, false)
 		if !strings.Contains(out, "Session: sess") || !strings.Contains(out, "Log: /tmp/log") || !strings.Contains(out, "hello") {
-			t.Fatalf("rich output missing fields: %s", out)
+			t.Fatalf("full output missing fields: %s", out)
 		}
 
 		args := buildCodexArgs(&Config{Mode: "new", WorkDir: "/tmp"}, "task")
@@ -280,6 +286,45 @@ func TestExecutorHelperCoverage(t *testing.T) {
 		args = buildCodexArgs(&Config{Mode: "resume", SessionID: "sess"}, "target")
 		if !slices.Equal(args, []string{"e", "--skip-git-repo-check", "--json", "resume", "sess", "target"}) {
 			t.Fatalf("unexpected resume args: %+v", args)
+		}
+	})
+
+	t.Run("generateFinalOutputASCIIMode", func(t *testing.T) {
+		t.Setenv("CODEAGENT_ASCII_MODE", "true")
+
+		results := []TaskResult{
+			{TaskID: "ok", ExitCode: 0, Coverage: "92%", CoverageNum: 92, CoverageTarget: 90, KeyOutput: "done"},
+			{TaskID: "warn", ExitCode: 0, Coverage: "80%", CoverageNum: 80, CoverageTarget: 90, KeyOutput: "did"},
+			{TaskID: "bad", ExitCode: 2, Error: "boom"},
+		}
+		out := generateFinalOutput(results)
+
+		for _, sym := range []string{"PASS", "WARN", "FAIL"} {
+			if !strings.Contains(out, sym) {
+				t.Fatalf("ASCII mode should include %q, got: %s", sym, out)
+			}
+		}
+		for _, sym := range []string{"✓", "⚠️", "✗"} {
+			if strings.Contains(out, sym) {
+				t.Fatalf("ASCII mode should not include %q, got: %s", sym, out)
+			}
+		}
+	})
+
+	t.Run("generateFinalOutputUnicodeMode", func(t *testing.T) {
+		t.Setenv("CODEAGENT_ASCII_MODE", "false")
+
+		results := []TaskResult{
+			{TaskID: "ok", ExitCode: 0, Coverage: "92%", CoverageNum: 92, CoverageTarget: 90, KeyOutput: "done"},
+			{TaskID: "warn", ExitCode: 0, Coverage: "80%", CoverageNum: 80, CoverageTarget: 90, KeyOutput: "did"},
+			{TaskID: "bad", ExitCode: 2, Error: "boom"},
+		}
+		out := generateFinalOutput(results)
+
+		for _, sym := range []string{"✓", "⚠️", "✗"} {
+			if !strings.Contains(out, sym) {
+				t.Fatalf("Unicode mode should include %q, got: %s", sym, out)
+			}
 		}
 	})
 
@@ -1111,9 +1156,10 @@ func TestExecutorExecuteConcurrentWithContextBranches(t *testing.T) {
 			}
 		}
 
-		summary := generateFinalOutput(results)
+		// Test full output mode for shared marker (summary mode doesn't show it)
+		summary := generateFinalOutputWithMode(results, false)
 		if !strings.Contains(summary, "(shared)") {
-			t.Fatalf("summary missing shared marker: %s", summary)
+			t.Fatalf("full output missing shared marker: %s", summary)
 		}
 
 		mainLogger.Flush()
