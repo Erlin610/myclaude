@@ -108,6 +108,60 @@
           "description": "Copy development commands documentation"
         }
       ]
+    },
+    "omo": {
+      "enabled": true,
+      "description": "Multi-agent orchestration for code analysis and implementation",
+      "operations": [
+        {
+          "type": "copy_file",
+          "source": "skills/omo/SKILL.md",
+          "target": "skills/omo/SKILL.md",
+          "description": "Install omo skill"
+        },
+        {
+          "type": "copy_file",
+          "source": "skills/omo/README.md",
+          "target": "skills/omo/README.md",
+          "description": "Install omo README"
+        },
+        {
+          "type": "copy_file",
+          "source": "skills/omo/references/develop.md",
+          "target": "skills/omo/references/develop.md",
+          "description": "Install develop agent reference"
+        },
+        {
+          "type": "copy_file",
+          "source": "skills/omo/references/document-writer.md",
+          "target": "skills/omo/references/document-writer.md",
+          "description": "Install document-writer agent reference"
+        },
+        {
+          "type": "copy_file",
+          "source": "skills/omo/references/explore.md",
+          "target": "skills/omo/references/explore.md",
+          "description": "Install explore agent reference"
+        },
+        {
+          "type": "copy_file",
+          "source": "skills/omo/references/frontend-ui-ux-engineer.md",
+          "target": "skills/omo/references/frontend-ui-ux-engineer.md",
+          "description": "Install frontend-ui-ux-engineer agent reference"
+        },
+        {
+          "type": "copy_file",
+          "source": "skills/omo/references/librarian.md",
+          "target": "skills/omo/references/librarian.md",
+          "description": "Install librarian agent reference"
+        },
+        {
+          "type": "copy_file",
+          "source": "skills/omo/references/oracle.md",
+          "target": "skills/omo/references/oracle.md",
+          "description": "Install oracle agent reference"
+        }
+      ]
     }
   }
 }
