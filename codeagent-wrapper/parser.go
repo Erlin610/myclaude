@@ -59,14 +59,6 @@ const (
 	jsonLinePreviewBytes = 256
 )
 
-type codexHeader struct {
-	Type     string `json:"type"`
-	ThreadID string `json:"thread_id,omitempty"`
-	Item     *struct {
-		Type string `json:"type"`
-	} `json:"item,omitempty"`
-}
-
 // UnifiedEvent combines all backend event formats into a single structure
 // to avoid multiple JSON unmarshal operations per event
 type UnifiedEvent struct {
@@ -87,6 +79,18 @@ type UnifiedEvent struct {
 	Content string `json:"content,omitempty"`
 	Delta   *bool  `json:"delta,omitempty"`
 	Status  string `json:"status,omitempty"`
+
+	// Opencode-specific fields (camelCase sessionID)
+	OpencodeSessionID string          `json:"sessionID,omitempty"`
+	Part              json.RawMessage `json:"part,omitempty"`
+}
+
+// OpencodePart represents the part field in opencode events
+type OpencodePart struct {
+	Type      string `json:"type"`
+	Text      string `json:"text,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	SessionID string `json:"sessionID,omitempty"`
 }
 
 // ItemContent represents the parsed item.text field for Codex events
@@ -120,9 +124,10 @@ func parseJSONStreamInternal(r io.Reader, warnFn func(string), infoFn func(strin
 	totalEvents := 0
 
 	var (
-		codexMessage  string
-		claudeMessage string
-		geminiBuffer  strings.Builder
+		codexMessage    string
+		claudeMessage   string
+		geminiBuffer    strings.Builder
+		opencodeMessage strings.Builder
 	)
 
 	for {
@@ -163,11 +168,46 @@ func parseJSONStreamInternal(r io.Reader, warnFn func(string), infoFn func(strin
 				isCodex = true
 			}
 		}
+		// Codex-specific event types without thread_id or item
+		if !isCodex && (event.Type == "turn.started" || event.Type == "turn.completed") {
+			isCodex = true
+		}
 		isClaude := event.Subtype != "" || event.Result != ""
 		if !isClaude && event.Type == "result" && event.SessionID != "" && event.Status == "" {
 			isClaude = true
 		}
-		isGemini := event.Role != "" || event.Delta != nil || event.Status != ""
+		isGemini := (event.Type == "init" && event.SessionID != "") || event.Role != "" || event.Delta != nil || event.Status != ""
+		isOpencode := event.OpencodeSessionID != "" && len(event.Part) > 0
+
+		// Handle Opencode events first (most specific detection)
+		if isOpencode {
+			if threadID == "" {
+				threadID = event.OpencodeSessionID
+			}
+
+			var part OpencodePart
+			if err := json.Unmarshal(event.Part, &part); err != nil {
+				warnFn(fmt.Sprintf("Failed to parse opencode part: %s", err.Error()))
+				continue
+			}
+
+			// Extract sessionID from part if available
+			if part.SessionID != "" && threadID == "" {
+				threadID = part.SessionID
+			}
+
+			infoFn(fmt.Sprintf("Parsed Opencode event #%d type=%s part_type=%s", totalEvents, event.Type, part.Type))
+
+			if event.Type == "text" && part.Text != "" {
+				opencodeMessage.WriteString(part.Text)
+				notifyMessage()
+			}
+
+			if part.Type == "step-finish" && part.Reason == "stop" {
+				notifyComplete()
+			}
+			continue
+		}
 
 		// Handle Codex events
 		if isCodex {
@@ -192,6 +232,10 @@ func parseJSONStreamInternal(r io.Reader, warnFn func(string), infoFn func(strin
 					threadID = event.ThreadID
 				}
 				infoFn(fmt.Sprintf("thread.completed event thread_id=%s", event.ThreadID))
+				notifyComplete()
+
+			case "turn.completed":
+				infoFn("turn.completed event")
 				notifyComplete()
 
 			case "item.completed":
@@ -276,6 +320,8 @@ func parseJSONStreamInternal(r io.Reader, warnFn func(string), infoFn func(strin
 	}
 
 	switch {
+	case opencodeMessage.Len() > 0:
+		message = opencodeMessage.String()
 	case geminiBuffer.Len() > 0:
 		message = geminiBuffer.String()
 	case claudeMessage != "":

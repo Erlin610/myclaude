@@ -2,7 +2,7 @@
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Claude Code](https://img.shields.io/badge/Claude-Code-blue)](https://claude.ai/code)
-[![Version](https://img.shields.io/badge/Version-5.2-green)](https://github.com/cexll/myclaude)
+[![Version](https://img.shields.io/badge/Version-5.6-green)](https://github.com/cexll/myclaude)
 
 > AI 驱动的开发自动化 - 多后端执行架构 (Codex/Claude/Gemini)
 
@@ -29,6 +29,41 @@ python3 install.py --install-dir ~/.claude
 ```
 
 ## 工作流概览
+
+### 0. OmO 多智能体编排器（复杂任务推荐）
+
+**基于风险信号智能路由任务到专业智能体的多智能体编排系统。**
+
+```bash
+/omo "分析并修复这个认证 bug"
+```
+
+**智能体层级：**
+| 智能体 | 角色 | 后端 | 模型 |
+|-------|------|------|------|
+| `oracle` | 技术顾问 | Claude | claude-opus-4-5 |
+| `librarian` | 外部研究 | Claude | claude-sonnet-4-5 |
+| `explore` | 代码库搜索 | OpenCode | grok-code |
+| `develop` | 代码实现 | Codex | gpt-5.2 |
+| `frontend-ui-ux-engineer` | UI/UX 专家 | Gemini | gemini-3-pro |
+| `document-writer` | 文档撰写 | Gemini | gemini-3-flash |
+
+**路由信号（非固定流水线）：**
+- 代码位置不明确 → `explore`
+- 外部库/API → `librarian`
+- 高风险/多文件变更 → `oracle`
+- 需要实现 → `develop` / `frontend-ui-ux-engineer`
+
+**常用配方：**
+- 解释代码：`explore`
+- 位置已知的小修复：直接 `develop`
+- Bug 修复，位置未知：`explore → develop`
+- 跨模块重构：`explore → oracle → develop`
+- 外部 API 集成：`explore + librarian → oracle → develop`
+
+**适用场景：** 复杂 bug 调查、多文件重构、架构决策
+
+---
 
 ### 1. Dev 工作流（推荐）
 
