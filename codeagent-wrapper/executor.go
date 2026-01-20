@@ -17,12 +17,14 @@ import (
 )
 
 const postMessageTerminateDelay = 1 * time.Second
+const forceKillWaitTimeout = 5 * time.Second
 
 // commandRunner abstracts exec.Cmd for testability
 type commandRunner interface {
 	Start() error
 	Wait() error
 	StdoutPipe() (io.ReadCloser, error)
+	StderrPipe() (io.ReadCloser, error)
 	StdinPipe() (io.WriteCloser, error)
 	SetStderr(io.Writer)
 	SetDir(string)
@@ -61,6 +63,13 @@ func (r *realCmd) StdoutPipe() (io.ReadCloser, error) {
 		return nil, errors.New("command is nil")
 	}
 	return r.cmd.StdoutPipe()
+}
+
+func (r *realCmd) StderrPipe() (io.ReadCloser, error) {
+	if r.cmd == nil {
+		return nil, errors.New("command is nil")
+	}
+	return r.cmd.StderrPipe()
 }
 
 func (r *realCmd) StdinPipe() (io.WriteCloser, error) {
@@ -227,6 +236,13 @@ func defaultRunCodexTaskFn(task TaskSpec, timeout int) TaskResult {
 	}
 	if task.Mode == "" {
 		task.Mode = "new"
+	}
+	if strings.TrimSpace(task.PromptFile) != "" {
+		prompt, err := readAgentPromptFile(task.PromptFile, false)
+		if err != nil {
+			return TaskResult{TaskID: task.ID, ExitCode: 1, Error: "failed to read prompt file: " + err.Error()}
+		}
+		task.Task = wrapTaskWithAgentPrompt(prompt, task.Task)
 	}
 	if task.UseStdin || shouldUseStdin(task.Task, false) {
 		task.UseStdin = true
@@ -511,45 +527,212 @@ func shouldSkipTask(task TaskSpec, failed map[string]TaskResult) (bool, string) 
 	return true, fmt.Sprintf("skipped due to failed dependencies: %s", strings.Join(blocked, ","))
 }
 
-func generateFinalOutput(results []TaskResult) string {
-	var sb strings.Builder
+// getStatusSymbols returns status symbols based on ASCII mode.
+func getStatusSymbols() (success, warning, failed string) {
+	if os.Getenv("CODEAGENT_ASCII_MODE") == "true" {
+		return "PASS", "WARN", "FAIL"
+	}
+	return "✓", "⚠️", "✗"
+}
 
+func generateFinalOutput(results []TaskResult) string {
+	return generateFinalOutputWithMode(results, true) // default to summary mode
+}
+
+// generateFinalOutputWithMode generates output based on mode
+// summaryOnly=true: structured report - every token has value
+// summaryOnly=false: full output with complete messages (legacy behavior)
+func generateFinalOutputWithMode(results []TaskResult, summaryOnly bool) string {
+	var sb strings.Builder
+	successSymbol, warningSymbol, failedSymbol := getStatusSymbols()
+
+	reportCoverageTarget := defaultCoverageTarget
+	for _, res := range results {
+		if res.CoverageTarget > 0 {
+			reportCoverageTarget = res.CoverageTarget
+			break
+		}
+	}
+
+	// Count results by status
 	success := 0
 	failed := 0
+	belowTarget := 0
 	for _, res := range results {
 		if res.ExitCode == 0 && res.Error == "" {
 			success++
+			target := res.CoverageTarget
+			if target <= 0 {
+				target = reportCoverageTarget
+			}
+			if res.Coverage != "" && target > 0 && res.CoverageNum < target {
+				belowTarget++
+			}
 		} else {
 			failed++
 		}
 	}
 
-	sb.WriteString(fmt.Sprintf("=== Parallel Execution Summary ===\n"))
-	sb.WriteString(fmt.Sprintf("Total: %d | Success: %d | Failed: %d\n\n", len(results), success, failed))
+	if summaryOnly {
+		// Header
+		sb.WriteString("=== Execution Report ===\n")
+		sb.WriteString(fmt.Sprintf("%d tasks | %d passed | %d failed", len(results), success, failed))
+		if belowTarget > 0 {
+			sb.WriteString(fmt.Sprintf(" | %d below %.0f%%", belowTarget, reportCoverageTarget))
+		}
+		sb.WriteString("\n\n")
 
-	for _, res := range results {
-		sb.WriteString(fmt.Sprintf("--- Task: %s ---\n", res.TaskID))
-		if res.Error != "" {
-			sb.WriteString(fmt.Sprintf("Status: FAILED (exit code %d)\nError: %s\n", res.ExitCode, res.Error))
-		} else if res.ExitCode != 0 {
-			sb.WriteString(fmt.Sprintf("Status: FAILED (exit code %d)\n", res.ExitCode))
-		} else {
-			sb.WriteString("Status: SUCCESS\n")
-		}
-		if res.SessionID != "" {
-			sb.WriteString(fmt.Sprintf("Session: %s\n", res.SessionID))
-		}
-		if res.LogPath != "" {
-			if res.sharedLog {
-				sb.WriteString(fmt.Sprintf("Log: %s (shared)\n", res.LogPath))
+		// Task Results - each task gets: Did + Files + Tests + Coverage
+		sb.WriteString("## Task Results\n")
+
+		for _, res := range results {
+			taskID := sanitizeOutput(res.TaskID)
+			coverage := sanitizeOutput(res.Coverage)
+			keyOutput := sanitizeOutput(res.KeyOutput)
+			logPath := sanitizeOutput(res.LogPath)
+			filesChanged := sanitizeOutput(strings.Join(res.FilesChanged, ", "))
+
+			target := res.CoverageTarget
+			if target <= 0 {
+				target = reportCoverageTarget
+			}
+
+			isSuccess := res.ExitCode == 0 && res.Error == ""
+			isBelowTarget := isSuccess && coverage != "" && target > 0 && res.CoverageNum < target
+
+			if isSuccess && !isBelowTarget {
+				// Passed task: one block with Did/Files/Tests
+				sb.WriteString(fmt.Sprintf("\n### %s %s", taskID, successSymbol))
+				if coverage != "" {
+					sb.WriteString(fmt.Sprintf(" %s", coverage))
+				}
+				sb.WriteString("\n")
+
+				if keyOutput != "" {
+					sb.WriteString(fmt.Sprintf("Did: %s\n", keyOutput))
+				}
+				if len(res.FilesChanged) > 0 {
+					sb.WriteString(fmt.Sprintf("Files: %s\n", filesChanged))
+				}
+				if res.TestsPassed > 0 {
+					sb.WriteString(fmt.Sprintf("Tests: %d passed\n", res.TestsPassed))
+				}
+				if logPath != "" {
+					sb.WriteString(fmt.Sprintf("Log: %s\n", logPath))
+				}
+
+			} else if isSuccess && isBelowTarget {
+				// Below target: add Gap info
+				sb.WriteString(fmt.Sprintf("\n### %s %s %s (below %.0f%%)\n", taskID, warningSymbol, coverage, target))
+
+				if keyOutput != "" {
+					sb.WriteString(fmt.Sprintf("Did: %s\n", keyOutput))
+				}
+				if len(res.FilesChanged) > 0 {
+					sb.WriteString(fmt.Sprintf("Files: %s\n", filesChanged))
+				}
+				if res.TestsPassed > 0 {
+					sb.WriteString(fmt.Sprintf("Tests: %d passed\n", res.TestsPassed))
+				}
+				// Extract what's missing from coverage
+				gap := sanitizeOutput(extractCoverageGap(res.Message))
+				if gap != "" {
+					sb.WriteString(fmt.Sprintf("Gap: %s\n", gap))
+				}
+				if logPath != "" {
+					sb.WriteString(fmt.Sprintf("Log: %s\n", logPath))
+				}
+
 			} else {
-				sb.WriteString(fmt.Sprintf("Log: %s\n", res.LogPath))
+				// Failed task: show error detail
+				sb.WriteString(fmt.Sprintf("\n### %s %s FAILED\n", taskID, failedSymbol))
+				sb.WriteString(fmt.Sprintf("Exit code: %d\n", res.ExitCode))
+				if errText := sanitizeOutput(res.Error); errText != "" {
+					sb.WriteString(fmt.Sprintf("Error: %s\n", errText))
+				}
+				// Show context from output (last meaningful lines)
+				detail := sanitizeOutput(extractErrorDetail(res.Message, 300))
+				if detail != "" {
+					sb.WriteString(fmt.Sprintf("Detail: %s\n", detail))
+				}
+				if logPath != "" {
+					sb.WriteString(fmt.Sprintf("Log: %s\n", logPath))
+				}
 			}
 		}
-		if res.Message != "" {
-			sb.WriteString(fmt.Sprintf("\n%s\n", res.Message))
+
+		// Summary section
+		sb.WriteString("\n## Summary\n")
+		sb.WriteString(fmt.Sprintf("- %d/%d completed successfully\n", success, len(results)))
+
+		if belowTarget > 0 || failed > 0 {
+			var needFix []string
+			var needCoverage []string
+			for _, res := range results {
+				if res.ExitCode != 0 || res.Error != "" {
+					taskID := sanitizeOutput(res.TaskID)
+					reason := sanitizeOutput(res.Error)
+					if reason == "" && res.ExitCode != 0 {
+						reason = fmt.Sprintf("exit code %d", res.ExitCode)
+					}
+					reason = safeTruncate(reason, 50)
+					needFix = append(needFix, fmt.Sprintf("%s (%s)", taskID, reason))
+					continue
+				}
+
+				target := res.CoverageTarget
+				if target <= 0 {
+					target = reportCoverageTarget
+				}
+				if res.Coverage != "" && target > 0 && res.CoverageNum < target {
+					needCoverage = append(needCoverage, sanitizeOutput(res.TaskID))
+				}
+			}
+			if len(needFix) > 0 {
+				sb.WriteString(fmt.Sprintf("- Fix: %s\n", strings.Join(needFix, ", ")))
+			}
+			if len(needCoverage) > 0 {
+				sb.WriteString(fmt.Sprintf("- Coverage: %s\n", strings.Join(needCoverage, ", ")))
+			}
 		}
-		sb.WriteString("\n")
+
+	} else {
+		// Legacy full output mode
+		sb.WriteString("=== Parallel Execution Summary ===\n")
+		sb.WriteString(fmt.Sprintf("Total: %d | Success: %d | Failed: %d\n\n", len(results), success, failed))
+
+		for _, res := range results {
+			taskID := sanitizeOutput(res.TaskID)
+			sb.WriteString(fmt.Sprintf("--- Task: %s ---\n", taskID))
+			if res.Error != "" {
+				sb.WriteString(fmt.Sprintf("Status: FAILED (exit code %d)\nError: %s\n", res.ExitCode, sanitizeOutput(res.Error)))
+			} else if res.ExitCode != 0 {
+				sb.WriteString(fmt.Sprintf("Status: FAILED (exit code %d)\n", res.ExitCode))
+			} else {
+				sb.WriteString("Status: SUCCESS\n")
+			}
+			if res.Coverage != "" {
+				sb.WriteString(fmt.Sprintf("Coverage: %s\n", sanitizeOutput(res.Coverage)))
+			}
+			if res.SessionID != "" {
+				sb.WriteString(fmt.Sprintf("Session: %s\n", sanitizeOutput(res.SessionID)))
+			}
+			if res.LogPath != "" {
+				logPath := sanitizeOutput(res.LogPath)
+				if res.sharedLog {
+					sb.WriteString(fmt.Sprintf("Log: %s (shared)\n", logPath))
+				} else {
+					sb.WriteString(fmt.Sprintf("Log: %s\n", logPath))
+				}
+			}
+			if res.Message != "" {
+				message := sanitizeOutput(res.Message)
+				if message != "" {
+					sb.WriteString(fmt.Sprintf("\n%s\n", message))
+				}
+			}
+			sb.WriteString("\n")
+		}
 	}
 
 	return sb.String()
@@ -572,9 +755,18 @@ func buildCodexArgs(cfg *Config, targetArg string) []string {
 
 	args := []string{"e"}
 
-	if envFlagEnabled("CODEX_BYPASS_SANDBOX") {
-		logWarn("CODEX_BYPASS_SANDBOX=true: running without approval/sandbox protection")
+	// Default to bypass sandbox unless CODEX_BYPASS_SANDBOX=false
+	if cfg.Yolo || envFlagDefaultTrue("CODEX_BYPASS_SANDBOX") {
+		logWarn("YOLO mode or CODEX_BYPASS_SANDBOX enabled: running without approval/sandbox protection")
 		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
+	}
+
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		args = append(args, "--model", model)
+	}
+
+	if reasoningEffort := strings.TrimSpace(cfg.ReasoningEffort); reasoningEffort != "" {
+		args = append(args, "-c", "model_reasoning_effort="+reasoningEffort)
 	}
 
 	args = append(args, "--skip-git-repo-check")
@@ -617,11 +809,14 @@ func runCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, backe
 	logger := injectedLogger
 
 	cfg := &Config{
-		Mode:      taskSpec.Mode,
-		Task:      taskSpec.Task,
-		SessionID: taskSpec.SessionID,
-		WorkDir:   taskSpec.WorkDir,
-		Backend:   defaultBackendName,
+		Mode:            taskSpec.Mode,
+		Task:            taskSpec.Task,
+		SessionID:       taskSpec.SessionID,
+		WorkDir:         taskSpec.WorkDir,
+		Model:           taskSpec.Model,
+		ReasoningEffort: taskSpec.ReasoningEffort,
+		SkipPermissions: taskSpec.SkipPermissions,
+		Backend:         defaultBackendName,
 	}
 
 	commandName := codexCommand
@@ -647,6 +842,21 @@ func runCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, backe
 		result.ExitCode = 1
 		result.Error = "resume mode requires non-empty session_id"
 		return result
+	}
+
+	var claudeEnv map[string]string
+	if cfg.Backend == "claude" {
+		settings := loadMinimalClaudeSettings()
+		claudeEnv = settings.Env
+		if cfg.Mode != "resume" && strings.TrimSpace(cfg.Model) == "" && settings.Model != "" {
+			cfg.Model = settings.Model
+		}
+	}
+
+	// Load gemini env from ~/.gemini/.env if exists
+	var geminiEnv map[string]string
+	if cfg.Backend == "gemini" {
+		geminiEnv = loadGeminiEnv()
 	}
 
 	useStdin := taskSpec.UseStdin
@@ -748,10 +958,11 @@ func runCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, backe
 
 	cmd := newCommandRunner(ctx, commandName, codexArgs...)
 
-	if cfg.Backend == "claude" {
-		if env := loadMinimalEnvSettings(); len(env) > 0 {
-			cmd.SetEnv(env)
-		}
+	if cfg.Backend == "claude" && len(claudeEnv) > 0 {
+		cmd.SetEnv(claudeEnv)
+	}
+	if cfg.Backend == "gemini" && len(geminiEnv) > 0 {
+		cmd.SetEnv(geminiEnv)
 	}
 
 	// For backends that don't support -C flag (claude, gemini), set working directory via cmd.Dir
@@ -772,33 +983,43 @@ func runCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, backe
 		if cfg.Backend == "gemini" {
 			stderrFilter = newFilteringWriter(os.Stderr, geminiNoisePatterns)
 			stderrOut = stderrFilter
-			defer stderrFilter.Flush()
+		} else if cfg.Backend == "codex" {
+			stderrFilter = newFilteringWriter(os.Stderr, codexNoisePatterns)
+			stderrOut = stderrFilter
 		}
 		stderrWriters = append([]io.Writer{stderrOut}, stderrWriters...)
 	}
-	if len(stderrWriters) == 1 {
-		cmd.SetStderr(stderrWriters[0])
-	} else {
-		cmd.SetStderr(io.MultiWriter(stderrWriters...))
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		logErrorFn("Failed to create stderr pipe: " + err.Error())
+		result.ExitCode = 1
+		result.Error = attachStderr("failed to create stderr pipe: " + err.Error())
+		return result
 	}
 
 	var stdinPipe io.WriteCloser
-	var err error
 	if useStdin {
 		stdinPipe, err = cmd.StdinPipe()
 		if err != nil {
 			logErrorFn("Failed to create stdin pipe: " + err.Error())
 			result.ExitCode = 1
 			result.Error = attachStderr("failed to create stdin pipe: " + err.Error())
+			closeWithReason(stderr, "stdin-pipe-failed")
 			return result
 		}
 	}
+
+	stderrDone := make(chan error, 1)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		logErrorFn("Failed to create stdout pipe: " + err.Error())
 		result.ExitCode = 1
 		result.Error = attachStderr("failed to create stdout pipe: " + err.Error())
+		closeWithReason(stderr, "stdout-pipe-failed")
+		if stdinPipe != nil {
+			_ = stdinPipe.Close()
+		}
 		return result
 	}
 
@@ -834,6 +1055,11 @@ func runCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, backe
 	logInfoFn(fmt.Sprintf("Starting %s with args: %s %s...", commandName, commandName, strings.Join(codexArgs[:min(5, len(codexArgs))], " ")))
 
 	if err := cmd.Start(); err != nil {
+		closeWithReason(stdout, "start-failed")
+		closeWithReason(stderr, "start-failed")
+		if stdinPipe != nil {
+			_ = stdinPipe.Close()
+		}
 		if strings.Contains(err.Error(), "executable file not found") {
 			msg := fmt.Sprintf("%s command not found in PATH", commandName)
 			logErrorFn(msg)
@@ -851,6 +1077,15 @@ func runCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, backe
 	if logger != nil {
 		logInfoFn(fmt.Sprintf("Log capturing to: %s", logger.Path()))
 	}
+
+	// Start stderr drain AFTER we know the command started, but BEFORE cmd.Wait can close the pipe.
+	go func() {
+		_, copyErr := io.Copy(io.MultiWriter(stderrWriters...), stderr)
+		if stderrFilter != nil {
+			stderrFilter.Flush()
+		}
+		stderrDone <- copyErr
+	}()
 
 	if useStdin && stdinPipe != nil {
 		logInfoFn(fmt.Sprintf("Writing %d chars to stdin...", len(taskSpec.Task)))
@@ -879,7 +1114,8 @@ func runCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, backe
 waitLoop:
 	for {
 		select {
-		case waitErr = <-waitCh:
+		case err := <-waitCh:
+			waitErr = err
 			break waitLoop
 		case <-ctx.Done():
 			ctxCancelled = true
@@ -890,8 +1126,17 @@ waitLoop:
 					terminated = true
 				}
 			}
-			waitErr = <-waitCh
-			break waitLoop
+			for {
+				select {
+				case err := <-waitCh:
+					waitErr = err
+					break waitLoop
+				case <-time.After(forceKillWaitTimeout):
+					if proc := cmd.Process(); proc != nil {
+						_ = proc.Kill()
+					}
+				}
+			}
 		case <-messageTimerCh:
 			forcedAfterComplete = true
 			messageTimerCh = nil
@@ -900,6 +1145,20 @@ waitLoop:
 				if timer := terminateCommandFn(cmd); timer != nil {
 					forceKillTimer = timer
 					terminated = true
+				}
+			}
+			// Close pipes to unblock stream readers, then wait for process exit.
+			closeWithReason(stdout, "terminate")
+			closeWithReason(stderr, "terminate")
+			for {
+				select {
+				case err := <-waitCh:
+					waitErr = err
+					break waitLoop
+				case <-time.After(forceKillWaitTimeout):
+					if proc := cmd.Process(); proc != nil {
+						_ = proc.Kill()
+					}
 				}
 			}
 		case <-completeSeen:
@@ -955,6 +1214,12 @@ waitLoop:
 			parsed = <-parseCh
 		}
 	}
+
+	closeWithReason(stderr, stdoutCloseReasonWait)
+	// Wait for stderr drain so stderrBuf / stderrLogger are not accessed concurrently.
+	// Important: cmd.Wait can block on internal stderr copying if cmd.Stderr is a non-file writer.
+	// We use StderrPipe and drain ourselves to avoid that deadlock class (common when children inherit pipes).
+	<-stderrDone
 
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		if errors.Is(ctxErr, context.DeadlineExceeded) {
@@ -1030,7 +1295,7 @@ func forwardSignals(ctx context.Context, cmd commandRunner, logErrorFn func(stri
 		case sig := <-sigCh:
 			logErrorFn(fmt.Sprintf("Received signal: %v", sig))
 			if proc := cmd.Process(); proc != nil {
-				_ = proc.Signal(syscall.SIGTERM)
+				_ = sendTermSignal(proc)
 				time.AfterFunc(time.Duration(forceKillDelay.Load())*time.Second, func() {
 					if p := cmd.Process(); p != nil {
 						_ = p.Kill()
@@ -1100,7 +1365,7 @@ func terminateCommand(cmd commandRunner) *forceKillTimer {
 		return nil
 	}
 
-	_ = proc.Signal(syscall.SIGTERM)
+	_ = sendTermSignal(proc)
 
 	done := make(chan struct{}, 1)
 	timer := time.AfterFunc(time.Duration(forceKillDelay.Load())*time.Second, func() {
@@ -1122,7 +1387,7 @@ func terminateProcess(cmd commandRunner) *time.Timer {
 		return nil
 	}
 
-	_ = proc.Signal(syscall.SIGTERM)
+	_ = sendTermSignal(proc)
 
 	return time.AfterFunc(time.Duration(forceKillDelay.Load())*time.Second, func() {
 		if p := cmd.Process(); p != nil {

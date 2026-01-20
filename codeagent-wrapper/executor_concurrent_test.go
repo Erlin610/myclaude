@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -32,7 +33,12 @@ type execFakeProcess struct {
 	mu      sync.Mutex
 }
 
-func (p *execFakeProcess) Pid() int { return p.pid }
+func (p *execFakeProcess) Pid() int {
+	if runtime.GOOS == "windows" {
+		return 0
+	}
+	return p.pid
+}
 func (p *execFakeProcess) Kill() error {
 	p.killed.Add(1)
 	return nil
@@ -84,6 +90,7 @@ func (rc *reasonReadCloser) record(reason string) {
 
 type execFakeRunner struct {
 	stdout          io.ReadCloser
+	stderr          io.ReadCloser
 	process         processHandle
 	stdin           io.WriteCloser
 	dir             string
@@ -92,6 +99,7 @@ type execFakeRunner struct {
 	waitDelay       time.Duration
 	startErr        error
 	stdoutErr       error
+	stderrErr       error
 	stdinErr        error
 	allowNilProcess bool
 	started         atomic.Bool
@@ -118,6 +126,15 @@ func (f *execFakeRunner) StdoutPipe() (io.ReadCloser, error) {
 		f.stdout = io.NopCloser(strings.NewReader(""))
 	}
 	return f.stdout, nil
+}
+func (f *execFakeRunner) StderrPipe() (io.ReadCloser, error) {
+	if f.stderrErr != nil {
+		return nil, f.stderrErr
+	}
+	if f.stderr == nil {
+		f.stderr = io.NopCloser(strings.NewReader(""))
+	}
+	return f.stderr, nil
 }
 func (f *execFakeRunner) StdinPipe() (io.WriteCloser, error) {
 	if f.stdinErr != nil {
@@ -163,6 +180,9 @@ func TestExecutorHelperCoverage(t *testing.T) {
 		if _, err := rc.StdoutPipe(); err == nil {
 			t.Fatalf("expected error for nil command")
 		}
+		if _, err := rc.StderrPipe(); err == nil {
+			t.Fatalf("expected error for nil command")
+		}
 		if _, err := rc.StdinPipe(); err == nil {
 			t.Fatalf("expected error for nil command")
 		}
@@ -182,11 +202,14 @@ func TestExecutorHelperCoverage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("StdoutPipe error: %v", err)
 		}
+		stderrPipe, err := rcProc.StderrPipe()
+		if err != nil {
+			t.Fatalf("StderrPipe error: %v", err)
+		}
 		stdinPipe, err := rcProc.StdinPipe()
 		if err != nil {
 			t.Fatalf("StdinPipe error: %v", err)
 		}
-		rcProc.SetStderr(io.Discard)
 		if err := rcProc.Start(); err != nil {
 			t.Fatalf("Start failed: %v", err)
 		}
@@ -200,6 +223,7 @@ func TestExecutorHelperCoverage(t *testing.T) {
 		_ = procHandle.Kill()
 		_ = rcProc.Wait()
 		_, _ = io.ReadAll(stdoutPipe)
+		_, _ = io.ReadAll(stderrPipe)
 
 		rp := &realProcess{}
 		if rp.Pid() != 0 {
@@ -258,8 +282,7 @@ func TestExecutorHelperCoverage(t *testing.T) {
 
 	t.Run("generateFinalOutputAndArgs", func(t *testing.T) {
 		const key = "CODEX_BYPASS_SANDBOX"
-		t.Cleanup(func() { os.Unsetenv(key) })
-		os.Unsetenv(key)
+		t.Setenv(key, "false")
 
 		out := generateFinalOutput([]TaskResult{
 			{TaskID: "ok", ExitCode: 0},
@@ -268,9 +291,15 @@ func TestExecutorHelperCoverage(t *testing.T) {
 		if !strings.Contains(out, "ok") || !strings.Contains(out, "fail") {
 			t.Fatalf("unexpected summary output: %s", out)
 		}
+		// Test summary mode (default) - should have new format with ### headers
 		out = generateFinalOutput([]TaskResult{{TaskID: "rich", ExitCode: 0, SessionID: "sess", LogPath: "/tmp/log", Message: "hello"}})
+		if !strings.Contains(out, "### rich") {
+			t.Fatalf("summary output missing task header: %s", out)
+		}
+		// Test full output mode - should have Session and Message
+		out = generateFinalOutputWithMode([]TaskResult{{TaskID: "rich", ExitCode: 0, SessionID: "sess", LogPath: "/tmp/log", Message: "hello"}}, false)
 		if !strings.Contains(out, "Session: sess") || !strings.Contains(out, "Log: /tmp/log") || !strings.Contains(out, "hello") {
-			t.Fatalf("rich output missing fields: %s", out)
+			t.Fatalf("full output missing fields: %s", out)
 		}
 
 		args := buildCodexArgs(&Config{Mode: "new", WorkDir: "/tmp"}, "task")
@@ -283,14 +312,52 @@ func TestExecutorHelperCoverage(t *testing.T) {
 		}
 	})
 
+	t.Run("generateFinalOutputASCIIMode", func(t *testing.T) {
+		t.Setenv("CODEAGENT_ASCII_MODE", "true")
+
+		results := []TaskResult{
+			{TaskID: "ok", ExitCode: 0, Coverage: "92%", CoverageNum: 92, CoverageTarget: 90, KeyOutput: "done"},
+			{TaskID: "warn", ExitCode: 0, Coverage: "80%", CoverageNum: 80, CoverageTarget: 90, KeyOutput: "did"},
+			{TaskID: "bad", ExitCode: 2, Error: "boom"},
+		}
+		out := generateFinalOutput(results)
+
+		for _, sym := range []string{"PASS", "WARN", "FAIL"} {
+			if !strings.Contains(out, sym) {
+				t.Fatalf("ASCII mode should include %q, got: %s", sym, out)
+			}
+		}
+		for _, sym := range []string{"✓", "⚠️", "✗"} {
+			if strings.Contains(out, sym) {
+				t.Fatalf("ASCII mode should not include %q, got: %s", sym, out)
+			}
+		}
+	})
+
+	t.Run("generateFinalOutputUnicodeMode", func(t *testing.T) {
+		t.Setenv("CODEAGENT_ASCII_MODE", "false")
+
+		results := []TaskResult{
+			{TaskID: "ok", ExitCode: 0, Coverage: "92%", CoverageNum: 92, CoverageTarget: 90, KeyOutput: "done"},
+			{TaskID: "warn", ExitCode: 0, Coverage: "80%", CoverageNum: 80, CoverageTarget: 90, KeyOutput: "did"},
+			{TaskID: "bad", ExitCode: 2, Error: "boom"},
+		}
+		out := generateFinalOutput(results)
+
+		for _, sym := range []string{"✓", "⚠️", "✗"} {
+			if !strings.Contains(out, sym) {
+				t.Fatalf("Unicode mode should include %q, got: %s", sym, out)
+			}
+		}
+	})
+
 	t.Run("executeConcurrentWrapper", func(t *testing.T) {
 		orig := runCodexTaskFn
 		defer func() { runCodexTaskFn = orig }()
 		runCodexTaskFn = func(task TaskSpec, timeout int) TaskResult {
 			return TaskResult{TaskID: task.ID, ExitCode: 0, Message: "done"}
 		}
-		os.Setenv("CODEAGENT_MAX_PARALLEL_WORKERS", "1")
-		defer os.Unsetenv("CODEAGENT_MAX_PARALLEL_WORKERS")
+		t.Setenv("CODEAGENT_MAX_PARALLEL_WORKERS", "1")
 
 		results := executeConcurrent([][]TaskSpec{{{ID: "wrap"}}}, 1)
 		if len(results) != 1 || results[0].TaskID != "wrap" {
@@ -555,6 +622,27 @@ func TestExecutorRunCodexTaskWithContext(t *testing.T) {
 		}
 		if rc == nil || rc.dir != "/tmp" {
 			t.Fatalf("expected backend to set cmd.Dir, got runner=%v dir=%q", rc, rc.dir)
+		}
+	})
+
+	t.Run("claudeSkipPermissionsPropagatesFromTaskSpec", func(t *testing.T) {
+		t.Setenv("CODEAGENT_SKIP_PERMISSIONS", "false")
+		var gotArgs []string
+		newCommandRunner = func(ctx context.Context, name string, args ...string) commandRunner {
+			gotArgs = append([]string(nil), args...)
+			return &execFakeRunner{
+				stdout:  newReasonReadCloser(`{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}`),
+				process: &execFakeProcess{pid: 15},
+			}
+		}
+
+		_ = closeLogger()
+		res := runCodexTaskWithContext(context.Background(), TaskSpec{ID: "task-skip", Task: "payload", WorkDir: ".", SkipPermissions: true}, ClaudeBackend{}, nil, false, false, 1)
+		if res.ExitCode != 0 || res.Error != "" {
+			t.Fatalf("unexpected result: %+v", res)
+		}
+		if !slices.Contains(gotArgs, "--dangerously-skip-permissions") {
+			t.Fatalf("expected --dangerously-skip-permissions in args, got %v", gotArgs)
 		}
 	})
 
@@ -1111,9 +1199,10 @@ func TestExecutorExecuteConcurrentWithContextBranches(t *testing.T) {
 			}
 		}
 
-		summary := generateFinalOutput(results)
+		// Test full output mode for shared marker (summary mode doesn't show it)
+		summary := generateFinalOutputWithMode(results, false)
 		if !strings.Contains(summary, "(shared)") {
-			t.Fatalf("summary missing shared marker: %s", summary)
+			t.Fatalf("full output missing shared marker: %s", summary)
 		}
 
 		mainLogger.Flush()
@@ -1204,7 +1293,7 @@ func TestExecutorSignalAndTermination(t *testing.T) {
 	proc.mu.Lock()
 	signalled := len(proc.signals)
 	proc.mu.Unlock()
-	if signalled == 0 {
+	if runtime.GOOS != "windows" && signalled == 0 {
 		t.Fatalf("process did not receive signal")
 	}
 	if proc.killed.Load() == 0 {

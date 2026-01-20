@@ -1,12 +1,12 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -14,14 +14,15 @@ import (
 )
 
 const (
-	version             = "5.2.8"
-	defaultWorkdir      = "."
-	defaultTimeout      = 7200 // seconds (2 hours)
-	codexLogLineLimit   = 1000
-	stdinSpecialChars   = "\n\\\"'`$"
-	stderrCaptureLimit  = 4 * 1024
-	defaultBackendName  = "codex"
-	defaultCodexCommand = "codex"
+	version               = "5.6.4"
+	defaultWorkdir        = "."
+	defaultTimeout        = 7200 // seconds (2 hours)
+	defaultCoverageTarget = 90.0
+	codexLogLineLimit     = 1000
+	stdinSpecialChars     = "\n\\\"'`$"
+	stderrCaptureLimit    = 4 * 1024
+	defaultBackendName    = "codex"
+	defaultCodexCommand   = "codex"
 
 	// stdout close reasons
 	stdoutCloseReasonWait  = "wait-done"
@@ -41,7 +42,6 @@ var (
 	buildCodexArgsFn   = buildCodexArgs
 	selectBackendFn    = selectBackend
 	commandContext     = exec.CommandContext
-	jsonMarshal        = json.Marshal
 	cleanupLogsFn      = cleanupOldLogs
 	signalNotifyFn     = signal.Notify
 	signalStopFn       = signal.Stop
@@ -175,6 +175,9 @@ func run() (exitCode int) {
 
 		if parallelIndex != -1 {
 			backendName := defaultBackendName
+			model := ""
+			fullOutput := false
+			skipPermissions := envFlagEnabled("CODEAGENT_SKIP_PERMISSIONS")
 			var extras []string
 
 			for i := 0; i < len(args); i++ {
@@ -182,6 +185,8 @@ func run() (exitCode int) {
 				switch {
 				case arg == "--parallel":
 					continue
+				case arg == "--full-output":
+					fullOutput = true
 				case arg == "--backend":
 					if i+1 >= len(args) {
 						fmt.Fprintln(os.Stderr, "ERROR: --backend flag requires a value")
@@ -196,17 +201,38 @@ func run() (exitCode int) {
 						return 1
 					}
 					backendName = value
+				case arg == "--model":
+					if i+1 >= len(args) {
+						fmt.Fprintln(os.Stderr, "ERROR: --model flag requires a value")
+						return 1
+					}
+					model = args[i+1]
+					i++
+				case strings.HasPrefix(arg, "--model="):
+					value := strings.TrimPrefix(arg, "--model=")
+					if value == "" {
+						fmt.Fprintln(os.Stderr, "ERROR: --model flag requires a value")
+						return 1
+					}
+					model = value
+				case arg == "--skip-permissions", arg == "--dangerously-skip-permissions":
+					skipPermissions = true
+				case strings.HasPrefix(arg, "--skip-permissions="):
+					skipPermissions = parseBoolFlag(strings.TrimPrefix(arg, "--skip-permissions="), skipPermissions)
+				case strings.HasPrefix(arg, "--dangerously-skip-permissions="):
+					skipPermissions = parseBoolFlag(strings.TrimPrefix(arg, "--dangerously-skip-permissions="), skipPermissions)
 				default:
 					extras = append(extras, arg)
 				}
 			}
 
 			if len(extras) > 0 {
-				fmt.Fprintln(os.Stderr, "ERROR: --parallel reads its task configuration from stdin; only --backend is allowed.")
+				fmt.Fprintln(os.Stderr, "ERROR: --parallel reads its task configuration from stdin; only --backend, --model, --full-output and --skip-permissions are allowed.")
 				fmt.Fprintln(os.Stderr, "Usage examples:")
 				fmt.Fprintf(os.Stderr, "  %s --parallel < tasks.txt\n", name)
 				fmt.Fprintf(os.Stderr, "  echo '...' | %s --parallel\n", name)
 				fmt.Fprintf(os.Stderr, "  %s --parallel <<'EOF'\n", name)
+				fmt.Fprintf(os.Stderr, "  %s --parallel --full-output <<'EOF'  # include full task output\n", name)
 				return 1
 			}
 
@@ -230,10 +256,15 @@ func run() (exitCode int) {
 			}
 
 			cfg.GlobalBackend = backendName
+			model = strings.TrimSpace(model)
 			for i := range cfg.Tasks {
 				if strings.TrimSpace(cfg.Tasks[i].Backend) == "" {
 					cfg.Tasks[i].Backend = backendName
 				}
+				if strings.TrimSpace(cfg.Tasks[i].Model) == "" && model != "" {
+					cfg.Tasks[i].Model = model
+				}
+				cfg.Tasks[i].SkipPermissions = cfg.Tasks[i].SkipPermissions || skipPermissions
 			}
 
 			timeoutSec := resolveTimeout()
@@ -244,7 +275,33 @@ func run() (exitCode int) {
 			}
 
 			results := executeConcurrent(layers, timeoutSec)
-			fmt.Println(generateFinalOutput(results))
+
+			// Extract structured report fields from each result
+			for i := range results {
+				results[i].CoverageTarget = defaultCoverageTarget
+				if results[i].Message == "" {
+					continue
+				}
+
+				lines := strings.Split(results[i].Message, "\n")
+
+				// Coverage extraction
+				results[i].Coverage = extractCoverageFromLines(lines)
+				results[i].CoverageNum = extractCoverageNum(results[i].Coverage)
+
+				// Files changed
+				results[i].FilesChanged = extractFilesChangedFromLines(lines)
+
+				// Test results
+				results[i].TestsPassed, results[i].TestsFailed = extractTestResultsFromLines(lines)
+
+				// Key output summary
+				results[i].KeyOutput = extractKeyOutputFromLines(lines, 150)
+			}
+
+			// Default: summary mode (context-efficient)
+			// --full-output: legacy full output mode
+			fmt.Println(generateFinalOutputWithMode(results, !fullOutput))
 
 			exitCode = 0
 			for _, res := range results {
@@ -320,6 +377,15 @@ func run() (exitCode int) {
 		}
 	}
 
+	if strings.TrimSpace(cfg.PromptFile) != "" {
+		prompt, err := readAgentPromptFile(cfg.PromptFile, cfg.PromptFileExplicit)
+		if err != nil {
+			logError("Failed to read prompt file: " + err.Error())
+			return 1
+		}
+		taskText = wrapTaskWithAgentPrompt(prompt, taskText)
+	}
+
 	useStdin := cfg.ExplicitStdin || shouldUseStdin(taskText, piped)
 
 	targetArg := taskText
@@ -372,11 +438,14 @@ func run() (exitCode int) {
 	logInfo(fmt.Sprintf("%s running...", cfg.Backend))
 
 	taskSpec := TaskSpec{
-		Task:      taskText,
-		WorkDir:   cfg.WorkDir,
-		Mode:      cfg.Mode,
-		SessionID: cfg.SessionID,
-		UseStdin:  useStdin,
+		Task:            taskText,
+		WorkDir:         cfg.WorkDir,
+		Mode:            cfg.Mode,
+		SessionID:       cfg.SessionID,
+		Model:           cfg.Model,
+		ReasoningEffort: cfg.ReasoningEffort,
+		SkipPermissions: cfg.SkipPermissions,
+		UseStdin:        useStdin,
 	}
 
 	result := runTaskFn(taskSpec, false, cfg.Timeout)
@@ -391,6 +460,91 @@ func run() (exitCode int) {
 	}
 
 	return 0
+}
+
+func readAgentPromptFile(path string, allowOutsideClaudeDir bool) (string, error) {
+	raw := strings.TrimSpace(path)
+	if raw == "" {
+		return "", nil
+	}
+
+	expanded := raw
+	if raw == "~" || strings.HasPrefix(raw, "~/") || strings.HasPrefix(raw, "~\\") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		if raw == "~" {
+			expanded = home
+		} else {
+			expanded = home + raw[1:]
+		}
+	}
+
+	absPath, err := filepath.Abs(expanded)
+	if err != nil {
+		return "", err
+	}
+	absPath = filepath.Clean(absPath)
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		if !allowOutsideClaudeDir {
+			return "", err
+		}
+		logWarn(fmt.Sprintf("Failed to resolve home directory for prompt file validation: %v; proceeding without restriction", err))
+	} else {
+		allowedDir := filepath.Clean(filepath.Join(home, ".claude"))
+		allowedAbs, err := filepath.Abs(allowedDir)
+		if err == nil {
+			allowedDir = filepath.Clean(allowedAbs)
+		}
+
+		isWithinDir := func(path, dir string) bool {
+			rel, err := filepath.Rel(dir, path)
+			if err != nil {
+				return false
+			}
+			rel = filepath.Clean(rel)
+			if rel == "." {
+				return true
+			}
+			if rel == ".." {
+				return false
+			}
+			prefix := ".." + string(os.PathSeparator)
+			return !strings.HasPrefix(rel, prefix)
+		}
+
+		if !allowOutsideClaudeDir {
+			if !isWithinDir(absPath, allowedDir) {
+				logWarn(fmt.Sprintf("Refusing to read prompt file outside %s: %s", allowedDir, absPath))
+				return "", fmt.Errorf("prompt file must be under %s", allowedDir)
+			}
+			resolvedPath, errPath := filepath.EvalSymlinks(absPath)
+			resolvedBase, errBase := filepath.EvalSymlinks(allowedDir)
+			if errPath == nil && errBase == nil {
+				resolvedPath = filepath.Clean(resolvedPath)
+				resolvedBase = filepath.Clean(resolvedBase)
+				if !isWithinDir(resolvedPath, resolvedBase) {
+					logWarn(fmt.Sprintf("Refusing to read prompt file outside %s (resolved): %s", resolvedBase, resolvedPath))
+					return "", fmt.Errorf("prompt file must be under %s", resolvedBase)
+				}
+			}
+		} else if !isWithinDir(absPath, allowedDir) {
+			logWarn(fmt.Sprintf("Reading prompt file outside %s: %s", allowedDir, absPath))
+		}
+	}
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(data), "\r\n"), nil
+}
+
+func wrapTaskWithAgentPrompt(prompt string, task string) string {
+	return "<agent-prompt>\n" + prompt + "\n</agent-prompt>\n\n" + task
 }
 
 func setLogger(l *Logger) {
@@ -443,20 +597,24 @@ func printHelp() {
 Usage:
     %[1]s "task" [workdir]
     %[1]s --backend claude "task" [workdir]
+    %[1]s --prompt-file /path/to/prompt.md "task" [workdir]
     %[1]s - [workdir]              Read task from stdin
     %[1]s resume <session_id> "task" [workdir]
     %[1]s resume <session_id> - [workdir]
     %[1]s --parallel               Run tasks in parallel (config from stdin)
+    %[1]s --parallel --full-output Run tasks in parallel with full output (legacy)
     %[1]s --version
     %[1]s --help
 
 Parallel mode examples:
     %[1]s --parallel < tasks.txt
     echo '...' | %[1]s --parallel
+    %[1]s --parallel --full-output < tasks.txt
     %[1]s --parallel <<'EOF'
 
 Environment Variables:
-    CODEX_TIMEOUT  Timeout in milliseconds (default: 7200000)
+    CODEX_TIMEOUT         Timeout in milliseconds (default: 7200000)
+    CODEAGENT_ASCII_MODE  Use ASCII symbols instead of Unicode (PASS/WARN/FAIL)
 
 Exit Codes:
     0    Success

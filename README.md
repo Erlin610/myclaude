@@ -7,7 +7,7 @@
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Claude Code](https://img.shields.io/badge/Claude-Code-blue)](https://claude.ai/code)
-[![Version](https://img.shields.io/badge/Version-5.2-green)](https://github.com/cexll/myclaude)
+[![Version](https://img.shields.io/badge/Version-5.6-green)](https://github.com/cexll/myclaude)
 
 > AI-powered development automation with multi-backend execution (Codex/Claude/Gemini)
 
@@ -34,6 +34,41 @@ python3 install.py --install-dir ~/.claude
 ```
 
 ## Workflows Overview
+
+### 0. OmO Multi-Agent Orchestrator (Recommended for Complex Tasks)
+
+**Intelligent multi-agent orchestration that routes tasks to specialized agents based on risk signals.**
+
+```bash
+/omo "analyze and fix this authentication bug"
+```
+
+**Agent Hierarchy:**
+| Agent | Role | Backend | Model |
+|-------|------|---------|-------|
+| `oracle` | Technical advisor | Claude | claude-opus-4-5 |
+| `librarian` | External research | Claude | claude-sonnet-4-5 |
+| `explore` | Codebase search | OpenCode | grok-code |
+| `develop` | Code implementation | Codex | gpt-5.2 |
+| `frontend-ui-ux-engineer` | UI/UX specialist | Gemini | gemini-3-pro |
+| `document-writer` | Documentation | Gemini | gemini-3-flash |
+
+**Routing Signals (Not Fixed Pipeline):**
+- Code location unclear → `explore`
+- External library/API → `librarian`
+- Risky/multi-file change → `oracle`
+- Implementation needed → `develop` / `frontend-ui-ux-engineer`
+
+**Common Recipes:**
+- Explain code: `explore`
+- Small fix with known location: `develop` directly
+- Bug fix, location unknown: `explore → develop`
+- Cross-cutting refactor: `explore → oracle → develop`
+- External API integration: `explore + librarian → oracle → develop`
+
+**Best For:** Complex bug investigation, multi-file refactoring, architecture decisions
+
+---
 
 ### 1. Dev Workflow (Recommended)
 
@@ -160,7 +195,7 @@ Required features:
 - `-p` - Prompt input flag
 - `-r <session_id>` - Resume sessions
 
-**Security Note:** The wrapper only adds `--dangerously-skip-permissions` for Claude when explicitly enabled (e.g. `--skip-permissions` / `CODEAGENT_SKIP_PERMISSIONS=true`). Keep it disabled unless you understand the risk.
+**Security Note:** The wrapper adds `--dangerously-skip-permissions` for Claude by default. Set `CODEAGENT_SKIP_PERMISSIONS=false` to disable if you need permission prompts.
 
 **Verify Claude CLI is installed:**
 ```bash
@@ -346,8 +381,10 @@ $Env:PATH = "$HOME\bin;$Env:PATH"
 ```
 
 ```batch
-REM cmd.exe - persistent for current user
-setx PATH "%USERPROFILE%\bin;%PATH%"
+REM cmd.exe - persistent for current user (use PowerShell method above instead)
+REM WARNING: This expands %PATH% which includes system PATH, causing duplication
+REM Note: Using reg add instead of setx to avoid 1024-character truncation limit
+reg add "HKCU\Environment" /v Path /t REG_EXPAND_SZ /d "%USERPROFILE%\bin;%PATH%" /f
 ```
 
 ---
@@ -371,11 +408,14 @@ setx PATH "%USERPROFILE%\bin;%PATH%"
 
 **Codex wrapper not found:**
 ```bash
-# Check PATH
-echo $PATH | grep -q "$HOME/.claude/bin" || echo 'export PATH="$HOME/.claude/bin:$PATH"' >> ~/.zshrc
+# Installer auto-adds PATH, check if configured
+if [[ ":$PATH:" != *":$HOME/.claude/bin:"* ]]; then
+    echo "PATH not configured. Reinstalling..."
+    bash install.sh
+fi
 
-# Reinstall
-bash install.sh
+# Or manually add (idempotent command)
+[[ ":$PATH:" != *":$HOME/.claude/bin:"* ]] && echo 'export PATH="$HOME/.claude/bin:$PATH"' >> ~/.zshrc
 ```
 
 **Permission denied:**
@@ -459,9 +499,106 @@ claude -r <session_id> "test"
 
 ---
 
-## Documentation
+## FAQ (Frequently Asked Questions)
 
-### Core Guides
+### Q1: `codeagent-wrapper` execution fails with "Unknown event format"
+
+**Problem:**
+```
+Unknown event format: {"type":"turn.started"}
+Unknown event format: {"type":"assistant", ...}
+```
+
+**Solution:**
+This is a logging event format display issue and does not affect actual functionality. It will be fixed in the next version. You can ignore these log outputs.
+
+**Related Issue:** [#96](https://github.com/cexll/myclaude/issues/96)
+
+---
+
+### Q2: Gemini cannot read files ignored by `.gitignore`
+
+**Problem:**
+When using `codeagent-wrapper --backend gemini`, files in directories like `.claude/` that are ignored by `.gitignore` cannot be read.
+
+**Solution:**
+- **Option 1:** Remove `.claude/` from your `.gitignore` file
+- **Option 2:** Ensure files that need to be read are not in `.gitignore` list
+
+**Related Issue:** [#75](https://github.com/cexll/myclaude/issues/75)
+
+---
+
+### Q3: `/dev` command parallel execution is very slow
+
+**Problem:**
+Using `/dev` command for simple features takes too long (over 30 minutes) with no visibility into task progress.
+
+**Solution:**
+1. **Check logs:** Review `C:\Users\User\AppData\Local\Temp\codeagent-wrapper-*.log` to identify bottlenecks
+2. **Adjust backend:**
+   - Try faster models like `gpt-5.1-codex-max`
+   - Running in WSL may be significantly faster
+3. **Workspace:** Use a single repository instead of monorepo with multiple sub-projects
+
+**Related Issue:** [#77](https://github.com/cexll/myclaude/issues/77)
+
+---
+
+### Q4: Codex permission denied with new Go version
+
+**Problem:**
+After upgrading to the new Go-based Codex implementation, execution fails with permission denied errors.
+
+**Solution:**
+Add the following configuration to `~/.codex/config.yaml` (Windows: `c:\user\.codex\config.toml`):
+```yaml
+model = "gpt-5.1-codex-max"
+model_reasoning_effort = "high"
+model_reasoning_summary = "detailed"
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+disable_response_storage = true
+network_access = true
+```
+
+**Key settings:**
+- `approval_policy = "never"` - Remove approval restrictions
+- `sandbox_mode = "workspace-write"` - Allow workspace write access
+- `network_access = true` - Enable network access
+
+**Related Issue:** [#31](https://github.com/cexll/myclaude/issues/31)
+
+---
+
+### Q5: How to disable default bypass/skip-permissions mode
+
+**Background:**
+By default, codeagent-wrapper enables bypass mode for both Codex and Claude backends:
+- `CODEX_BYPASS_SANDBOX=true` - Bypasses Codex sandbox restrictions
+- `CODEAGENT_SKIP_PERMISSIONS=true` - Skips Claude permission prompts
+
+**To disable (if you need sandbox/permission protection):**
+```bash
+export CODEX_BYPASS_SANDBOX=false
+export CODEAGENT_SKIP_PERMISSIONS=false
+```
+
+Or add to your shell profile (`~/.zshrc` or `~/.bashrc`):
+```bash
+echo 'export CODEX_BYPASS_SANDBOX=false' >> ~/.zshrc
+echo 'export CODEAGENT_SKIP_PERMISSIONS=false' >> ~/.zshrc
+```
+
+**Note:** Disabling bypass mode will require manual approval for certain operations.
+
+---
+
+**Still having issues?** Visit [GitHub Issues](https://github.com/cexll/myclaude/issues) to search or report new issues.
+
+---
+
+## Documentation
 - **[Codeagent-Wrapper Guide](docs/CODEAGENT-WRAPPER.md)** - Multi-backend execution wrapper
 - **[Hooks Documentation](docs/HOOKS.md)** - Custom hooks and automation
 

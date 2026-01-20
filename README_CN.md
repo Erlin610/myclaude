@@ -2,7 +2,7 @@
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Claude Code](https://img.shields.io/badge/Claude-Code-blue)](https://claude.ai/code)
-[![Version](https://img.shields.io/badge/Version-5.2-green)](https://github.com/cexll/myclaude)
+[![Version](https://img.shields.io/badge/Version-5.6-green)](https://github.com/cexll/myclaude)
 
 > AI 驱动的开发自动化 - 多后端执行架构 (Codex/Claude/Gemini)
 
@@ -29,6 +29,41 @@ python3 install.py --install-dir ~/.claude
 ```
 
 ## 工作流概览
+
+### 0. OmO 多智能体编排器（复杂任务推荐）
+
+**基于风险信号智能路由任务到专业智能体的多智能体编排系统。**
+
+```bash
+/omo "分析并修复这个认证 bug"
+```
+
+**智能体层级：**
+| 智能体 | 角色 | 后端 | 模型 |
+|-------|------|------|------|
+| `oracle` | 技术顾问 | Claude | claude-opus-4-5 |
+| `librarian` | 外部研究 | Claude | claude-sonnet-4-5 |
+| `explore` | 代码库搜索 | OpenCode | grok-code |
+| `develop` | 代码实现 | Codex | gpt-5.2 |
+| `frontend-ui-ux-engineer` | UI/UX 专家 | Gemini | gemini-3-pro |
+| `document-writer` | 文档撰写 | Gemini | gemini-3-flash |
+
+**路由信号（非固定流水线）：**
+- 代码位置不明确 → `explore`
+- 外部库/API → `librarian`
+- 高风险/多文件变更 → `oracle`
+- 需要实现 → `develop` / `frontend-ui-ux-engineer`
+
+**常用配方：**
+- 解释代码：`explore`
+- 位置已知的小修复：直接 `develop`
+- Bug 修复，位置未知：`explore → develop`
+- 跨模块重构：`explore → oracle → develop`
+- 外部 API 集成：`explore + librarian → oracle → develop`
+
+**适用场景：** 复杂 bug 调查、多文件重构、架构决策
+
+---
 
 ### 1. Dev 工作流（推荐）
 
@@ -282,8 +317,10 @@ $Env:PATH = "$HOME\bin;$Env:PATH"
 ```
 
 ```batch
-REM cmd.exe - 永久添加（当前用户）
-setx PATH "%USERPROFILE%\bin;%PATH%"
+REM cmd.exe - 永久添加（当前用户）（建议使用上面的 PowerShell 方法）
+REM 警告：此命令会展开 %PATH% 包含系统 PATH，导致重复
+REM 注意：使用 reg add 而非 setx 以避免 1024 字符截断限制
+reg add "HKCU\Environment" /v Path /t REG_EXPAND_SZ /d "%USERPROFILE%\bin;%PATH%" /f
 ```
 
 ---
@@ -307,11 +344,14 @@ setx PATH "%USERPROFILE%\bin;%PATH%"
 
 **Codex wrapper 未找到：**
 ```bash
-# 检查 PATH
-echo $PATH | grep -q "$HOME/.claude/bin" || echo 'export PATH="$HOME/.claude/bin:$PATH"' >> ~/.zshrc
+# 安装程序会自动添加 PATH，检查是否已添加
+if [[ ":$PATH:" != *":$HOME/.claude/bin:"* ]]; then
+    echo "PATH not configured. Reinstalling..."
+    bash install.sh
+fi
 
-# 重新安装
-bash install.sh
+# 或手动添加（幂等性命令）
+[[ ":$PATH:" != *":$HOME/.claude/bin:"* ]] && echo 'export PATH="$HOME/.claude/bin:$PATH"' >> ~/.zshrc
 ```
 
 **权限被拒绝：**
@@ -327,6 +367,105 @@ cat ~/.claude/installed_modules.json
 # 重新安装特定模块
 python3 install.py --module dev --force
 ```
+
+---
+
+## 常见问题 (FAQ)
+
+### Q1: `codeagent-wrapper` 执行时报错 "Unknown event format"
+
+**问题描述：**
+执行 `codeagent-wrapper` 时出现错误：
+```
+Unknown event format: {"type":"turn.started"}
+Unknown event format: {"type":"assistant", ...}
+```
+
+**解决方案：**
+这是日志事件流的显示问题，不影响实际功能执行。预计在下个版本中修复。如需排查其他问题，可忽略此日志输出。
+
+**相关 Issue：** [#96](https://github.com/cexll/myclaude/issues/96)
+
+---
+
+### Q2: Gemini 无法读取 `.gitignore` 忽略的文件
+
+**问题描述：**
+使用 `codeagent-wrapper --backend gemini` 时，无法读取 `.claude/` 等被 `.gitignore` 忽略的目录中的文件。
+
+**解决方案：**
+- **方案一：** 在项目根目录的 `.gitignore` 中取消对 `.claude/` 的忽略
+- **方案二：** 确保需要读取的文件不在 `.gitignore` 忽略列表中
+
+**相关 Issue：** [#75](https://github.com/cexll/myclaude/issues/75)
+
+---
+
+### Q3: `/dev` 命令并行执行特别慢
+
+**问题描述：**
+使用 `/dev` 命令开发简单功能耗时过长（超过30分钟），无法了解任务执行状态。
+
+**解决方案：**
+1. **检查日志：** 查看 `C:\Users\User\AppData\Local\Temp\codeagent-wrapper-*.log` 分析瓶颈
+2. **调整后端：**
+   - 尝试使用 `gpt-5.1-codex-max` 等更快的模型
+   - 在 WSL 环境下运行速度可能更快
+3. **工作区选择：** 使用独立的代码仓库而非包含多个子项目的 monorepo
+
+**相关 Issue：** [#77](https://github.com/cexll/myclaude/issues/77)
+
+---
+
+### Q4: 新版 Go 实现的 Codex 权限不足
+
+**问题描述：**
+升级到新版 Go 实现的 Codex 后，出现权限不足的错误。
+
+**解决方案：**
+在 `~/.codex/config.yaml` 中添加以下配置（Windows: `c:\user\.codex\config.toml`）：
+```yaml
+model = "gpt-5.1-codex-max"
+model_reasoning_effort = "high"
+model_reasoning_summary = "detailed"
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+disable_response_storage = true
+network_access = true
+```
+
+**关键配置说明：**
+- `approval_policy = "never"` - 移除审批限制
+- `sandbox_mode = "workspace-write"` - 允许工作区写入权限
+- `network_access = true` - 启用网络访问
+
+**相关 Issue：** [#31](https://github.com/cexll/myclaude/issues/31)
+
+---
+
+### Q5: 执行时遇到权限拒绝或沙箱限制
+
+**问题描述：**
+运行 codeagent-wrapper 时出现权限错误或沙箱限制。
+
+**解决方案：**
+设置以下环境变量：
+```bash
+export CODEX_BYPASS_SANDBOX=true
+export CODEAGENT_SKIP_PERMISSIONS=true
+```
+
+或添加到 shell 配置文件（`~/.zshrc` 或 `~/.bashrc`）：
+```bash
+echo 'export CODEX_BYPASS_SANDBOX=true' >> ~/.zshrc
+echo 'export CODEAGENT_SKIP_PERMISSIONS=true' >> ~/.zshrc
+```
+
+**注意：** 这些设置会绕过安全限制，请仅在可信环境中使用。
+
+---
+
+**仍有疑问？** 请访问 [GitHub Issues](https://github.com/cexll/myclaude/issues) 搜索或提交新问题。
 
 ---
 
