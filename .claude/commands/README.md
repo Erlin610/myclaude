@@ -64,3 +64,42 @@
 ---
 
 更多信息请查看命令文件：`init-project-command.md`
+
+## 升级命令
+
+### update-my-claude
+
+自动更新 MyClaude 仓库和组件。
+
+**功能：**
+- 从上游仓库拉取最新更新
+- 自动合并更改（处理常见冲突）
+- 更新 codeagent-wrapper 二进制文件
+- 同步技能文件到 ~/.claude/
+- 验证更新并生成报告
+
+**使用方法：**
+```bash
+/update-my-claude
+```
+
+详细文档：[update-my-claude.md](./update-my-claude.md)
+
+### update-ohmyopencode
+
+自动升级 oh-my-opencode 到最新版本。
+
+**功能：**
+- 检查当前版本
+- 备份配置文件
+- 升级到最新稳定版
+- 验证升级结果
+- 生成升级报告
+
+**使用方法：**
+```bash
+/update-ohmyopencode
+/update-ohmyopencode 2.14.0  # 指定版本
+```
+
+详细文档：[update-ohmyopencode.md](./update-ohmyopencode.md)
