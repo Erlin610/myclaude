@@ -70,6 +70,11 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Uninstall specified modules",
     )
     parser.add_argument(
+        "--update",
+        action="store_true",
+        help="Update already installed modules",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Force overwrite existing files",
@@ -121,8 +126,11 @@ def save_settings(ctx: Dict[str, Any], settings: Dict[str, Any]) -> None:
     _save_json(settings_path, settings)
 
 
-def find_module_hooks(module_name: str, cfg: Dict[str, Any], ctx: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Find hooks.json for a module if it exists."""
+def find_module_hooks(module_name: str, cfg: Dict[str, Any], ctx: Dict[str, Any]) -> Optional[tuple]:
+    """Find hooks.json for a module if it exists.
+
+    Returns tuple of (hooks_config, plugin_root_path) or None.
+    """
     # Check for hooks in operations (copy_dir targets)
     for op in cfg.get("operations", []):
         if op.get("type") == "copy_dir":
@@ -130,18 +138,19 @@ def find_module_hooks(module_name: str, cfg: Dict[str, Any], ctx: Dict[str, Any]
             hooks_file = target_dir / "hooks" / "hooks.json"
             if hooks_file.exists():
                 try:
-                    return _load_json(hooks_file)
+                    return (_load_json(hooks_file), str(target_dir))
                 except (ValueError, FileNotFoundError):
                     pass
 
     # Also check source directory during install
     for op in cfg.get("operations", []):
         if op.get("type") == "copy_dir":
+            target_dir = ctx["install_dir"] / op["target"]
             source_dir = ctx["config_dir"] / op["source"]
             hooks_file = source_dir / "hooks" / "hooks.json"
             if hooks_file.exists():
                 try:
-                    return _load_json(hooks_file)
+                    return (_load_json(hooks_file), str(target_dir))
                 except (ValueError, FileNotFoundError):
                     pass
 
@@ -153,13 +162,28 @@ def _create_hook_marker(module_name: str) -> str:
     return f"__module:{module_name}__"
 
 
-def merge_hooks_to_settings(module_name: str, hooks_config: Dict[str, Any], ctx: Dict[str, Any]) -> None:
+def _replace_hook_variables(obj: Any, plugin_root: str) -> Any:
+    """Recursively replace ${CLAUDE_PLUGIN_ROOT} in hook config."""
+    if isinstance(obj, str):
+        return obj.replace("${CLAUDE_PLUGIN_ROOT}", plugin_root)
+    elif isinstance(obj, dict):
+        return {k: _replace_hook_variables(v, plugin_root) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_replace_hook_variables(item, plugin_root) for item in obj]
+    return obj
+
+
+def merge_hooks_to_settings(module_name: str, hooks_config: Dict[str, Any], ctx: Dict[str, Any], plugin_root: str = "") -> None:
     """Merge module hooks into settings.json."""
     settings = load_settings(ctx)
     settings.setdefault("hooks", {})
 
     module_hooks = hooks_config.get("hooks", {})
     marker = _create_hook_marker(module_name)
+
+    # Replace ${CLAUDE_PLUGIN_ROOT} with actual path
+    if plugin_root:
+        module_hooks = _replace_hook_variables(module_hooks, plugin_root)
 
     for hook_type, hook_entries in module_hooks.items():
         settings["hooks"].setdefault(hook_type, [])
@@ -333,6 +357,19 @@ def check_module_installed(name: str, cfg: Dict[str, Any], ctx: Dict[str, Any]) 
             target = (install_dir / op["target"]).expanduser().resolve()
             if target.exists():
                 return True
+        elif op_type == "merge_dir":
+            src = (ctx["config_dir"] / op["source"]).expanduser().resolve()
+            if not src.exists() or not src.is_dir():
+                continue
+            for subdir in src.iterdir():
+                if not subdir.is_dir():
+                    continue
+                for f in subdir.iterdir():
+                    if not f.is_file():
+                        continue
+                    candidate = (install_dir / subdir.name / f.name).expanduser().resolve()
+                    if candidate.exists():
+                        return True
     return False
 
 
@@ -707,10 +744,11 @@ def execute_module(name: str, cfg: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[
             raise
 
     # Handle hooks: find and merge module hooks into settings.json
-    hooks_config = find_module_hooks(name, cfg, ctx)
-    if hooks_config:
+    hooks_result = find_module_hooks(name, cfg, ctx)
+    if hooks_result:
+        hooks_config, plugin_root = hooks_result
         try:
-            merge_hooks_to_settings(name, hooks_config, ctx)
+            merge_hooks_to_settings(name, hooks_config, ctx, plugin_root)
             result["operations"].append({"type": "merge_hooks", "status": "success"})
             result["has_hooks"] = True
         except Exception as exc:
@@ -1041,6 +1079,74 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
 
         update_status_after_uninstall(list(to_uninstall.keys()), ctx)
         print(f"\n✓ Uninstall complete")
+        return 0
+
+    # Handle --update
+    if getattr(args, "update", False):
+        try:
+            ensure_install_dir(ctx["install_dir"])
+        except Exception as exc:
+            print(f"Failed to prepare install dir: {exc}", file=sys.stderr)
+            return 1
+
+        installed_status = get_installed_modules(config, ctx)
+        if args.module:
+            selected = select_modules(config, args.module)
+            modules = {k: v for k, v in selected.items() if installed_status.get(k, False)}
+        else:
+            modules = {
+                k: v
+                for k, v in config.get("modules", {}).items()
+                if installed_status.get(k, False)
+            }
+
+        if not modules:
+            print("No installed modules to update.")
+            return 0
+
+        ctx["force"] = True
+        prepare_status_backup(ctx)
+
+        total = len(modules)
+        print(f"Updating {total} module(s) in {ctx['install_dir']}...")
+
+        results: List[Dict[str, Any]] = []
+        for idx, (name, cfg) in enumerate(modules.items(), 1):
+            print(f"[{idx}/{total}] Updating module: {name}...")
+            try:
+                results.append(execute_module(name, cfg, ctx))
+                print(f"  ✓ {name} updated successfully")
+            except Exception as exc:  # noqa: BLE001
+                print(f"  ✗ {name} failed: {exc}", file=sys.stderr)
+                rollback(ctx)
+                if not args.force:
+                    return 1
+                results.append(
+                    {
+                        "module": name,
+                        "status": "failed",
+                        "operations": [],
+                        "installed_at": datetime.now().isoformat(),
+                    }
+                )
+                break
+
+        current_status = load_installed_status(ctx)
+        for r in results:
+            if r.get("status") == "success":
+                current_status.setdefault("modules", {})[r["module"]] = r
+        current_status["updated_at"] = datetime.now().isoformat()
+        with Path(ctx["status_file"]).open("w", encoding="utf-8") as fh:
+            json.dump(current_status, fh, indent=2, ensure_ascii=False)
+
+        success = sum(1 for r in results if r.get("status") == "success")
+        failed = len(results) - success
+        if failed == 0:
+            print(f"\n✓ Update complete: {success} module(s) updated")
+        else:
+            print(f"\n⚠ Update finished with errors: {success} success, {failed} failed")
+            if not args.force:
+                return 1
         return 0
 
     # No --module specified: enter interactive management mode
