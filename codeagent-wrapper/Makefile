@@ -1,7 +1,6 @@
 GO ?= go
-
-BINARY ?= codeagent
-CMD_PKG := ./cmd/codeagent
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -ldflags "-X codeagent-wrapper/internal/app.version=$(VERSION)"
 
 TOOLS_BIN := $(CURDIR)/bin
 TOOLCHAIN ?= go1.22.0
@@ -14,7 +13,7 @@ STATICCHECK := $(TOOLS_BIN)/staticcheck
 .PHONY: build test lint clean install
 
 build:
-	$(GO) build -o $(BINARY) $(CMD_PKG)
+	$(GO) build $(LDFLAGS) -o codeagent-wrapper ./cmd/codeagent-wrapper
 
 test:
 	$(GO) test ./...
@@ -35,4 +34,4 @@ clean:
 	@python3 -c 'import glob, os; paths=["codeagent","codeagent.exe","codeagent-wrapper","codeagent-wrapper.exe","coverage.out","cover.out","coverage.html"]; paths += glob.glob("coverage*.out") + glob.glob("cover_*.out") + glob.glob("*.test"); [os.remove(p) for p in paths if os.path.exists(p)]'
 
 install:
-	$(GO) install $(CMD_PKG)
+	$(GO) install $(LDFLAGS) ./cmd/codeagent-wrapper

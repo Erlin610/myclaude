@@ -2,7 +2,7 @@
 
 `codeagent-wrapper` 是一个用 Go 编写的“多后端 AI 代码代理”命令行包装器：用统一的 CLI 入口封装不同的 AI 工具后端（Codex / Claude / Gemini / Opencode），并提供一致的参数、配置与会话恢复体验。
 
-入口：`cmd/codeagent/main.go`（生成二进制名：`codeagent`）。
+入口：`cmd/codeagent/main.go`（生成二进制名：`codeagent`）和 `cmd/codeagent-wrapper/main.go`（生成二进制名：`codeagent-wrapper`）。两者行为一致。
 
 ## 功能特性
 
@@ -22,12 +22,14 @@
 
 ```bash
 go install ./cmd/codeagent
+go install ./cmd/codeagent-wrapper
 ```
 
 安装后确认：
 
 ```bash
 codeagent version
+codeagent-wrapper version
 ```
 
 ## 使用示例
@@ -149,3 +151,7 @@ make lint
 make clean
 ```
 
+## 故障排查
+
+- macOS 下如果看到临时目录相关的 `permission denied`（例如临时可执行文件无法在 `/var/folders/.../T` 执行），可设置一个可执行的临时目录：`CODEAGENT_TMPDIR=$HOME/.codeagent/tmp`。
+- `claude` 后端的 `base_url/api_key`（来自 `~/.codeagent/models.json`）会注入到子进程环境变量：`ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY`。若 `base_url` 指向本地代理（如 `localhost:23001`），请确认代理进程在运行。

@@ -9,8 +9,9 @@ import (
 	"time"
 )
 
+var version = "dev"
+
 const (
-	version               = "6.0.0-alpha1"
 	defaultWorkdir        = "."
 	defaultTimeout        = 7200 // seconds (2 hours)
 	defaultCoverageTarget = 90.0
@@ -24,7 +25,7 @@ const (
 	stdoutCloseReasonWait  = "wait-done"
 	stdoutCloseReasonDrain = "drain-timeout"
 	stdoutCloseReasonCtx   = "context-cancel"
-	stdoutDrainTimeout     = 100 * time.Millisecond
+	stdoutDrainTimeout     = 500 * time.Millisecond
 )
 
 // Test hooks for dependency injection

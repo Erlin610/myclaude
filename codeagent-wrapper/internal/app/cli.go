@@ -168,6 +168,7 @@ func newCleanupCommand() *cobra.Command {
 }
 
 func runWithLoggerAndCleanup(fn func() int) (exitCode int) {
+	ensureExecutableTempDir()
 	logger, err := NewLogger()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERROR: failed to initialize logger: %v\n", err)
@@ -254,7 +255,11 @@ func buildSingleConfig(cmd *cobra.Command, args []string, rawArgv []string, opts
 	var resolvedBackend, resolvedModel, resolvedPromptFile, resolvedReasoning string
 	if agentName != "" {
 		var resolvedYolo bool
-		resolvedBackend, resolvedModel, resolvedPromptFile, resolvedReasoning, _, _, resolvedYolo = config.ResolveAgentConfig(agentName)
+		var err error
+		resolvedBackend, resolvedModel, resolvedPromptFile, resolvedReasoning, _, _, resolvedYolo, err = config.ResolveAgentConfig(agentName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to resolve agent %q: %w", agentName, err)
+		}
 		yolo = resolvedYolo
 	}
 
@@ -635,6 +640,7 @@ func runSingleMode(cfg *Config, name string) int {
 		WorkDir:         cfg.WorkDir,
 		Mode:            cfg.Mode,
 		SessionID:       cfg.SessionID,
+		Backend:         cfg.Backend,
 		Model:           cfg.Model,
 		ReasoningEffort: cfg.ReasoningEffort,
 		Agent:           cfg.Agent,
@@ -646,6 +652,12 @@ func runSingleMode(cfg *Config, name string) int {
 
 	if result.ExitCode != 0 {
 		return result.ExitCode
+	}
+
+	// Validate that we got a meaningful output message
+	if strings.TrimSpace(result.Message) == "" {
+		logError(fmt.Sprintf("no output message: backend=%s returned empty result.Message with exit_code=0", cfg.Backend))
+		return 1
 	}
 
 	fmt.Println(result.Message)

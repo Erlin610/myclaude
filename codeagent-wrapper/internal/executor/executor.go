@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -40,7 +41,7 @@ const (
 	stdoutCloseReasonWait  = "wait-done"
 	stdoutCloseReasonDrain = "drain-timeout"
 	stdoutCloseReasonCtx   = "context-cancel"
-	stdoutDrainTimeout     = 100 * time.Millisecond
+	stdoutDrainTimeout     = 500 * time.Millisecond
 )
 
 // Hook points (tests can override inside this package).
@@ -253,6 +254,15 @@ func (p *realProcess) Signal(sig os.Signal) error {
 
 // newCommandRunner creates a new commandRunner (test hook injection point)
 var newCommandRunner = func(ctx context.Context, name string, args ...string) commandRunner {
+	if runtime.GOOS == "windows" {
+		lowerName := strings.ToLower(strings.TrimSpace(name))
+		if strings.HasSuffix(lowerName, ".bat") || strings.HasSuffix(lowerName, ".cmd") {
+			cmdArgs := make([]string, 0, 2+len(args))
+			cmdArgs = append(cmdArgs, "/c", name)
+			cmdArgs = append(cmdArgs, args...)
+			return &realCmd{cmd: commandContext(ctx, "cmd.exe", cmdArgs...)}
+		}
+	}
 	return &realCmd{cmd: commandContext(ctx, name, args...)}
 }
 
@@ -940,6 +950,11 @@ func RunCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, backe
 	// Load gemini env from ~/.gemini/.env if exists
 	if cfg.Backend == "gemini" {
 		fileEnv = loadGeminiEnv()
+		if cfg.Mode != "resume" && strings.TrimSpace(cfg.Model) == "" {
+			if model := fileEnv["GEMINI_MODEL"]; model != "" {
+				cfg.Model = model
+			}
+		}
 	}
 
 	useStdin := taskSpec.UseStdin
@@ -1055,15 +1070,25 @@ func RunCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, backe
 	if envBackend != nil {
 		baseURL, apiKey := config.ResolveBackendConfig(cfg.Backend)
 		if agentName := strings.TrimSpace(taskSpec.Agent); agentName != "" {
-			agentBackend, _, _, _, agentBaseURL, agentAPIKey, _ := config.ResolveAgentConfig(agentName)
-			if strings.EqualFold(strings.TrimSpace(agentBackend), strings.TrimSpace(cfg.Backend)) {
-				baseURL, apiKey = agentBaseURL, agentAPIKey
+			agentBackend, _, _, _, agentBaseURL, agentAPIKey, _, err := config.ResolveAgentConfig(agentName)
+			if err == nil {
+				if strings.EqualFold(strings.TrimSpace(agentBackend), strings.TrimSpace(cfg.Backend)) {
+					baseURL, apiKey = agentBaseURL, agentAPIKey
+				}
 			}
 		}
 		if injected := envBackend.Env(baseURL, apiKey); len(injected) > 0 {
 			cmd.SetEnv(injected)
+			// Log injected env vars with masked API keys (to file and stderr)
+			for k, v := range injected {
+				msg := fmt.Sprintf("Env: %s=%s", k, maskSensitiveValue(k, v))
+				logInfoFn(msg)
+				fmt.Fprintln(os.Stderr, "  "+msg)
+			}
 		}
 	}
+
+	injectTempEnv(cmd)
 
 	// For backends that don't support -C flag (claude, gemini), set working directory via cmd.Dir
 	// Codex passes workdir via -C flag, so we skip setting Dir for it to avoid conflicts
@@ -1374,6 +1399,22 @@ waitLoop:
 	return result
 }
 
+func injectTempEnv(cmd commandRunner) {
+	if cmd == nil {
+		return
+	}
+	env := make(map[string]string, 3)
+	for _, k := range []string{"TMPDIR", "TMP", "TEMP"} {
+		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+			env[k] = v
+		}
+	}
+	if len(env) == 0 {
+		return
+	}
+	cmd.SetEnv(env)
+}
+
 func cancelReason(commandName string, ctx context.Context) string {
 	if ctx == nil {
 		return "Context cancelled"
@@ -1443,4 +1484,20 @@ func terminateCommand(cmd commandRunner) *forceKillTimer {
 	})
 
 	return &forceKillTimer{timer: timer, done: done}
+}
+
+// maskSensitiveValue masks sensitive values like API keys for logging.
+// Values containing "key", "token", or "secret" (case-insensitive) are masked.
+// For values longer than 8 chars: shows first 4 + **** + last 4.
+// For shorter values: shows only ****.
+func maskSensitiveValue(key, value string) string {
+	keyLower := strings.ToLower(key)
+	if strings.Contains(keyLower, "key") || strings.Contains(keyLower, "token") || strings.Contains(keyLower, "secret") {
+		if len(value) > 8 {
+			return value[:4] + "****" + value[len(value)-4:]
+		} else if len(value) > 0 {
+			return "****"
+		}
+	}
+	return value
 }
