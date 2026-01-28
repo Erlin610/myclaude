@@ -1,0 +1,9 @@
+{
+  "name": "think-tank",
+  "description": "项目智囊团 - 多角色协作评审系统，包含商业、市场、运营、法务、产品、技术六大专家角色，提供全方位项目决策支持",
+  "version": "1.0.0",
+  "author": {
+    "name": "Erlin610",
+    "email": "erlin610@example.com"
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "version": "1.0",
+  "experts": {
+    "business-architect": {
+      "backend": "codex",
+      "model": "gpt-5.2",
+      "timeout": 3600,
+      "description": "商业/财务架构师：盈利模型、资金流、UE模型"
+    },
+    "market-researcher": {
+      "backend": "claude",
+      "model": "claude-sonnet-4-5",
+      "timeout": 3600,
+      "description": "市场/用户调研专家：需求验证、竞品分析"
+    },
+    "operations-architect": {
+      "backend": "codex",
+      "model": "gpt-5.2",
+      "timeout": 3600,
+      "description": "运营/供应链架构师：流程设计、运力规划"
+    },
+    "legal-advisor": {
+      "backend": "claude",
+      "model": "claude-sonnet-4-5",
+      "timeout": 3600,
+      "description": "法务/合规顾问：法律风险、合规要求"
+    },
+    "product-director": {
+      "backend": "claude",
+      "model": "claude-opus-4-5",
+      "timeout": 3600,
+      "description": "产品设计总监：业务抽象、MVP定义"
+    },
+    "tech-architect": {
+      "backend": "codex",
+      "model": "gpt-5.2",
+      "timeout": 3600,
+      "description": "技术架构师：技术选型、架构设计"
+    }
+  },
+  "execution": {
+    "parallel_enabled": true,
+    "max_parallel_tasks": 3,
+    "default_depth": "deep",
+    "strict_model_enforcement": true,
+    "allow_model_fallback": false
+  }
+}

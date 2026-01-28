@@ -1,0 +1,9 @@
+{
+  "name": "ui-designer",
+  "description": "UI 设计师 - 基于 PRD 产出 UI 设计方案和设计规范，确保视觉一致性和用户体验",
+  "version": "1.0.0",
+  "author": {
+    "name": "Erlin610",
+    "email": "erlin610@example.com"
+  }
+}

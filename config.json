@@ -206,6 +206,42 @@
           }
         }
       ]
+    },
+    "think-tank": {
+      "enabled": true,
+      "description": "Think-tank multi-expert decision system with 6 strategic roles",
+      "operations": [
+        {
+          "type": "copy_dir",
+          "source": "skills/think-tank",
+          "target": "skills/think-tank",
+          "description": "Install think-tank skill with all expert references and templates"
+        }
+      ]
+    },
+    "product-manager": {
+      "enabled": true,
+      "description": "Product Manager execution role for PRD creation",
+      "operations": [
+        {
+          "type": "copy_dir",
+          "source": "skills/product-manager",
+          "target": "skills/product-manager",
+          "description": "Install product-manager skill with PRD template"
+        }
+      ]
+    },
+    "ui-designer": {
+      "enabled": true,
+      "description": "UI Designer execution role for interface design",
+      "operations": [
+        {
+          "type": "copy_dir",
+          "source": "skills/ui-designer",
+          "target": "skills/ui-designer",
+          "description": "Install ui-designer skill with design system template"
+        }
+      ]
     }
   }
 }
