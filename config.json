@@ -146,6 +146,18 @@
         }
       ]
     },
+    "rrcc-course": {
+      "enabled": true,
+      "description": "世界顶尖课程开发专家，产教融合+一课三融+80+交互式训练工具，构建成长型课程",
+      "operations": [
+        {
+          "type": "copy_dir",
+          "source": "skills/rrcc-course",
+          "target": "skills/rrcc-course",
+          "description": "Install rrcc-course skill with references and templates"
+        }
+      ]
+    },
     "think-tank": {
       "enabled": true,
       "description": "Think-tank multi-expert decision system with 6 strategic roles",
