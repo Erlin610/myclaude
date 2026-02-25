@@ -2,11 +2,52 @@
 
 All notable changes to this project will be documented in this file.
 
+## [6.7.0] - 2026-02-10
+
+### 🚀 Features
+
+- feat(install): per-module agent merge/unmerge for ~/.codeagent/models.json
+- feat(install): post-install verification (wrapper version, PATH, backend CLIs)
+- feat(install): install CLAUDE.md by default
+- feat(docs): document 9 skills, 11 commands, claudekit module, OpenCode backend
+
+### 🐛 Bug Fixes
+
+- fix(docs): correct 7-phase → 5-phase for do skill across all docs
+- fix(install): best-effort default config install (never crashes main flow)
+- fix(install): interactive quit no longer triggers post-install actions
+- fix(install): empty parent directory cleanup on copy_file uninstall
+- fix(install): agent restore on uninstall when shared by multiple modules
+- fix(docs): remove non-existent on-stop hook references
+
+### 📚 Documentation
+
+- Updated USER_GUIDE.md with 13 CLI flags and OpenCode backend
+- Updated README.md/README_CN.md with complete module and skill listings
+- Added templates/models.json.example with all agent presets (do + omo)
+
+## [6.6.0] - 2026-02-10
+
+### 🚀 Features
+
+- feat(skills): add per-task skill spec auto-detection and injection
+- feat: add worktree support and refactor do skill to Python
+
+### 🐛 Bug Fixes
+
+- fix(test): set USERPROFILE on Windows for skills tests
+- fix(do): reuse worktree across phases via DO_WORKTREE_DIR env var
+- fix(release): auto-generate release notes from git history
+
+### 📚 Documentation
+
+- audit and fix documentation, installation scripts, and default configuration
+
 ## [6.0.0] - 2026-01-26
 
 ### 🚀 Features
 
-- support `npx github:cexll/myclaude` for installation and execution
+- support `npx github:stellarlinkco/myclaude` for installation and execution
 - default module changed from `dev` to `do`
 
 ### 🚜 Refactor
@@ -97,7 +138,7 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
-- read GEMINI_MODEL from ~/.gemini/.env ([#131](https://github.com/cexll/myclaude/issues/131))
+- read GEMINI_MODEL from ~/.gemini/.env ([#131](https://github.com/stellarlinkco/myclaude/issues/131))
 
 - validate non-empty output message before printing
 
@@ -118,7 +159,7 @@ All notable changes to this project will be documented in this file.
 
 - update release workflow build path for new directory structure
 
-- write PATH config to both profile and rc files ([#128](https://github.com/cexll/myclaude/issues/128))
+- write PATH config to both profile and rc files ([#128](https://github.com/stellarlinkco/myclaude/issues/128))
 
 ### 🚀 Features
 
@@ -143,9 +184,9 @@ All notable changes to this project will be documented in this file.
 ### 📚 Documentation
 
 
-- update 'Agent Hierarchy' model for frontend-ui-ux-engineer and document-writer in README ([#127](https://github.com/cexll/myclaude/issues/127))
+- update 'Agent Hierarchy' model for frontend-ui-ux-engineer and document-writer in README ([#127](https://github.com/stellarlinkco/myclaude/issues/127))
 
-- update mappings for frontend-ui-ux-engineer and document-writer in README ([#126](https://github.com/cexll/myclaude/issues/126))
+- update mappings for frontend-ui-ux-engineer and document-writer in README ([#126](https://github.com/stellarlinkco/myclaude/issues/126))
 
 ### 🚀 Features
 
@@ -164,7 +205,7 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
-- remove extraneous dash arg for opencode stdin mode ([#124](https://github.com/cexll/myclaude/issues/124))
+- remove extraneous dash arg for opencode stdin mode ([#124](https://github.com/stellarlinkco/myclaude/issues/124))
 
 ### 💼 Other
 
@@ -177,7 +218,7 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
-- correct default models for oracle and librarian agents ([#120](https://github.com/cexll/myclaude/issues/120))
+- correct default models for oracle and librarian agents ([#120](https://github.com/stellarlinkco/myclaude/issues/120))
 
 ### 🚀 Features
 
@@ -190,7 +231,7 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
-- filter codex 0.84.0 stderr noise logs ([#122](https://github.com/cexll/myclaude/issues/122))
+- filter codex 0.84.0 stderr noise logs ([#122](https://github.com/stellarlinkco/myclaude/issues/122))
 
 - filter codex stderr noise logs
 
@@ -215,11 +256,11 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
-- propagate SkipPermissions to parallel tasks ([#113](https://github.com/cexll/myclaude/issues/113))
+- propagate SkipPermissions to parallel tasks ([#113](https://github.com/stellarlinkco/myclaude/issues/113))
 
 - add timeout for Windows process termination
 
-- reject dash as workdir parameter ([#118](https://github.com/cexll/myclaude/issues/118))
+- reject dash as workdir parameter ([#118](https://github.com/stellarlinkco/myclaude/issues/118))
 
 ### 📚 Documentation
 
@@ -274,14 +315,14 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
-- 修复 Gemini init 事件 session_id 未提取的问题 ([#111](https://github.com/cexll/myclaude/issues/111))
+- 修复 Gemini init 事件 session_id 未提取的问题 ([#111](https://github.com/stellarlinkco/myclaude/issues/111))
 
 - fix codeagent skill TaskOutput
 
 ### 💼 Other
 
 
-- Merge branch 'master' of github.com:cexll/myclaude
+- Merge branch 'master' of github.com:stellarlinkco/myclaude
 
 - add test-cases skill
 
@@ -298,7 +339,7 @@ All notable changes to this project will be documented in this file.
 ### 💼 Other
 
 
-- 修复 Windows 后端退出：taskkill 结束进程树 + turn.completed 支持 ([#108](https://github.com/cexll/myclaude/issues/108))
+- 修复 Windows 后端退出：taskkill 结束进程树 + turn.completed 支持 ([#108](https://github.com/stellarlinkco/myclaude/issues/108))
 
 ## [5.4.3] - 2026-01-06
 
@@ -306,7 +347,7 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
-- support model parameter for all backends, auto-inject from settings ([#105](https://github.com/cexll/myclaude/issues/105))
+- support model parameter for all backends, auto-inject from settings ([#105](https://github.com/stellarlinkco/myclaude/issues/105))
 
 ### 📚 Documentation
 
@@ -326,7 +367,7 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
-- replace setx with reg add to avoid 1024-char PATH truncation ([#101](https://github.com/cexll/myclaude/issues/101))
+- replace setx with reg add to avoid 1024-char PATH truncation ([#101](https://github.com/stellarlinkco/myclaude/issues/101))
 
 ## [5.4.1] - 2025-12-26
 
@@ -334,21 +375,21 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
-- 移除未知事件格式的日志噪声 ([#96](https://github.com/cexll/myclaude/issues/96))
+- 移除未知事件格式的日志噪声 ([#96](https://github.com/stellarlinkco/myclaude/issues/96))
 
-- prevent duplicate PATH entries on reinstall ([#95](https://github.com/cexll/myclaude/issues/95))
+- prevent duplicate PATH entries on reinstall ([#95](https://github.com/stellarlinkco/myclaude/issues/95))
 
 ### 📚 Documentation
 
 
 - 添加 FAQ 常见问题章节
 
-- update troubleshooting with idempotent PATH commands ([#95](https://github.com/cexll/myclaude/issues/95))
+- update troubleshooting with idempotent PATH commands ([#95](https://github.com/stellarlinkco/myclaude/issues/95))
 
 ### 🚀 Features
 
 
-- Add intelligent backend selection based on task complexity ([#61](https://github.com/cexll/myclaude/issues/61))
+- Add intelligent backend selection based on task complexity ([#61](https://github.com/stellarlinkco/myclaude/issues/61))
 
 ## [5.4.0] - 2025-12-24
 
@@ -363,7 +404,7 @@ All notable changes to this project will be documented in this file.
 ### 🚀 Features
 
 
-- v5.4.0 structured execution report ([#94](https://github.com/cexll/myclaude/issues/94))
+- v5.4.0 structured execution report ([#94](https://github.com/stellarlinkco/myclaude/issues/94))
 
 ## [5.2.8] - 2025-12-22
 
@@ -389,21 +430,21 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
-- allow claude backend to read env from setting.json while preventing recursion ([#92](https://github.com/cexll/myclaude/issues/92))
+- allow claude backend to read env from setting.json while preventing recursion ([#92](https://github.com/stellarlinkco/myclaude/issues/92))
 
-- comprehensive security and quality improvements for PR #85 & #87 ([#90](https://github.com/cexll/myclaude/issues/90))
+- comprehensive security and quality improvements for PR #85 & #87 ([#90](https://github.com/stellarlinkco/myclaude/issues/90))
 
-- Parser重复解析优化 + 严重bug修复 + PR #86兼容性 ([#88](https://github.com/cexll/myclaude/issues/88))
+- Parser重复解析优化 + 严重bug修复 + PR #86兼容性 ([#88](https://github.com/stellarlinkco/myclaude/issues/88))
 
 ### 💼 Other
 
 
-- Improve backend termination after message and extend timeout ([#86](https://github.com/cexll/myclaude/issues/86))
+- Improve backend termination after message and extend timeout ([#86](https://github.com/stellarlinkco/myclaude/issues/86))
 
 ### 🚀 Features
 
 
-- add millisecond-precision timestamps to all log entries ([#91](https://github.com/cexll/myclaude/issues/91))
+- add millisecond-precision timestamps to all log entries ([#91](https://github.com/stellarlinkco/myclaude/issues/91))
 
 ## [5.2.6] - 2025-12-19
 
@@ -411,16 +452,16 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
-- filter noisy stderr output from gemini backend ([#83](https://github.com/cexll/myclaude/issues/83))
+- filter noisy stderr output from gemini backend ([#83](https://github.com/stellarlinkco/myclaude/issues/83))
 
-- 修復 wsl install.sh 格式問題 ([#78](https://github.com/cexll/myclaude/issues/78))
+- 修復 wsl install.sh 格式問題 ([#78](https://github.com/stellarlinkco/myclaude/issues/78))
 
 ### 💼 Other
 
 
 - update all readme
 
-- BMADh和Requirements-Driven支持根据语义生成对应的文档 ([#82](https://github.com/cexll/myclaude/issues/82))
+- BMADh和Requirements-Driven支持根据语义生成对应的文档 ([#82](https://github.com/stellarlinkco/myclaude/issues/82))
 
 ## [5.2.5] - 2025-12-17
 
@@ -428,7 +469,7 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
-- 修复多 backend 并行日志 PID 混乱并移除包装格式 ([#74](https://github.com/cexll/myclaude/issues/74)) ([#76](https://github.com/cexll/myclaude/issues/76))
+- 修复多 backend 并行日志 PID 混乱并移除包装格式 ([#74](https://github.com/stellarlinkco/myclaude/issues/74)) ([#76](https://github.com/stellarlinkco/myclaude/issues/76))
 
 - replace "Codex" to "codeagent" in dev-plan-generator subagent
 
@@ -439,7 +480,7 @@ All notable changes to this project will be documented in this file.
 
 - Merge pull request #71 from aliceric27/master
 
-- Merge branch 'cexll:master' into master
+- Merge branch 'stellarlinkco:master' into master
 
 - Merge pull request #72 from changxvv/master
 
@@ -467,13 +508,13 @@ All notable changes to this project will be documented in this file.
 ### 💼 Other
 
 
-- Merge pull request #70 from cexll/fix/prevent-codeagent-infinite-recursion
+- Merge pull request #70 from stellarlinkco/fix/prevent-codeagent-infinite-recursion
 
-- Merge pull request #69 from cexll/myclaude-master-20251215-073053-338465000
+- Merge pull request #69 from stellarlinkco/myclaude-master-20251215-073053-338465000
 
 - update CHANGELOG.md
 
-- Merge pull request #65 from cexll/fix/issue-64-buffer-overflow
+- Merge pull request #65 from stellarlinkco/fix/issue-64-buffer-overflow
 
 ## [5.2.3] - 2025-12-15
 
@@ -481,7 +522,7 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
-- 修复 bufio.Scanner token too long 错误 ([#64](https://github.com/cexll/myclaude/issues/64))
+- 修复 bufio.Scanner token too long 错误 ([#64](https://github.com/stellarlinkco/myclaude/issues/64))
 
 ### 💼 Other
 
@@ -568,7 +609,7 @@ All notable changes to this project will be documented in this file.
 
 - Merge rc/5.2 into master: v5.2.0 release improvements
 
-- Merge pull request #53 from cexll/rc/5.2
+- Merge pull request #53 from stellarlinkco/rc/5.2
 
 - remove docs
 
@@ -586,7 +627,7 @@ All notable changes to this project will be documented in this file.
 
 - Merge branch 'master' into rc/5.2
 
-- Merge pull request #52 from cexll/fix/parallel-log-path-on-startup
+- Merge pull request #52 from stellarlinkco/fix/parallel-log-path-on-startup
 
 ### 📚 Documentation
 
@@ -643,7 +684,7 @@ All notable changes to this project will be documented in this file.
 ### 💼 Other
 
 
-- Merge pull request #51 from cexll/fix/channel-sync-race-conditions
+- Merge pull request #51 from stellarlinkco/fix/channel-sync-race-conditions
 
 - change codex-wrapper version
 
@@ -660,7 +701,7 @@ All notable changes to this project will be documented in this file.
 ### 💼 Other
 
 
-- Merge pull request #49 from cexll/freespace8/master
+- Merge pull request #49 from stellarlinkco/freespace8/master
 
 - resolve signal handling conflict preserving testability and Windows support
 
@@ -710,7 +751,7 @@ All notable changes to this project will be documented in this file.
 ### 💼 Other
 
 
-- Merge branch 'master' of github.com:cexll/myclaude
+- Merge branch 'master' of github.com:stellarlinkco/myclaude
 
 - Merge pull request #43 from gurdasnijor/smithery/add-badge
 
@@ -754,7 +795,7 @@ All notable changes to this project will be documented in this file.
 ### 💼 Other
 
 
-- Merge pull request #41 from cexll/fix-async-log
+- Merge pull request #41 from stellarlinkco/fix-async-log
 
 - remove test case 90
 
@@ -799,7 +840,7 @@ All notable changes to this project will be documented in this file.
 ### 💼 Other
 
 
-- Merge pull request #34 from cexll/cce-worktree-master-20251129-111802-997076000
+- Merge pull request #34 from stellarlinkco/cce-worktree-master-20251129-111802-997076000
 
 - update CLAUDE.md and codex skill
 
@@ -851,7 +892,7 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
-- update repository URLs to cexll/myclaude
+- update repository URLs to stellarlinkco/myclaude
 
 ## [4.7-alpha1] - 2025-11-27
 
@@ -864,7 +905,7 @@ All notable changes to this project will be documented in this file.
 ### 💼 Other
 
 
-- Merge pull request #29 from cexll/feat/codex-wrapper
+- Merge pull request #29 from stellarlinkco/feat/codex-wrapper
 
 - Add codex-wrapper Go implementation
 
@@ -916,9 +957,9 @@ All notable changes to this project will be documented in this file.
 
 - update codex skills model config
 
-- Merge branch 'master' of github.com:cexll/myclaude
+- Merge branch 'master' of github.com:stellarlinkco/myclaude
 
-- Merge pull request #24 from cexll/swe-agent/23-1763544297
+- Merge pull request #24 from stellarlinkco/swe-agent/23-1763544297
 
 ### 🚀 Features
 
@@ -984,7 +1025,7 @@ All notable changes to this project will be documented in this file.
 
 - optimize codex skills
 
-- Merge branch 'master' of github.com:cexll/myclaude
+- Merge branch 'master' of github.com:stellarlinkco/myclaude
 
 - Rename SKILLS.md to SKILL.md
 
@@ -1021,9 +1062,9 @@ All notable changes to this project will be documented in this file.
 ### 💼 Other
 
 
-- Merge branch 'master' of github.com:cexll/myclaude
+- Merge branch 'master' of github.com:stellarlinkco/myclaude
 
-- Merge pull request #18 from cexll/swe-agent/17-1760969135
+- Merge pull request #18 from stellarlinkco/swe-agent/17-1760969135
 
 - update requirements clarity
 
@@ -1051,13 +1092,13 @@ All notable changes to this project will be documented in this file.
 ### 💼 Other
 
 
-- Merge pull request #15 from cexll/swe-agent/13-1760944712
+- Merge pull request #15 from stellarlinkco/swe-agent/13-1760944712
 
 - Fix #13: Clean up redundant README files
 
 - Optimize README structure - Solution A (modular)
 
-- Merge pull request #14 from cexll/swe-agent/12-1760944588
+- Merge pull request #14 from stellarlinkco/swe-agent/12-1760944588
 
 - Fix #12: Update Makefile install paths for new directory structure
 
@@ -1067,7 +1108,7 @@ All notable changes to this project will be documented in this file.
 ### 💼 Other
 
 
-- Merge pull request #11 from cexll/swe-agent/10-1760752533
+- Merge pull request #11 from stellarlinkco/swe-agent/10-1760752533
 
 - Fix marketplace metadata references
 
