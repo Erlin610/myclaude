@@ -1,6 +1,6 @@
 ---
 name: book-digest
-description: Book knowledge distillation skill. Input a book title, output core arguments, chapter structure, key examples, memorable quotes, and actionable insights. Supports .md/.html file export via interactive prompt and multi-turn discussion mode. Usage: /book-digest <book title>
+description: Book knowledge distillation skill. Input a book title, output core arguments, chapter structure, key examples, memorable quotes, and actionable insights. Supports .md/.html file export via interactive prompt and multi-turn discussion mode. Use /book-digest-discuss <file> to resume discussion from a previously exported digest. Usage: /book-digest <book title>
 ---
 
 # Book Digest — Knowledge Distillation Skill
@@ -22,9 +22,11 @@ All user-facing output and interaction must be in **Chinese**. Skill instruction
 
 ```
 /book-digest <书名>
+/book-digest-discuss <digest-file.html 或 digest-file.md>
 ```
 
-No flags. Format selection is handled interactively after the digest is generated.
+- `/book-digest <书名>`: Full digest mode. Format selection is handled interactively after the digest is generated.
+- `/book-digest-discuss <file>`: Resume discussion from a previously exported digest file. See Mode C below.
 
 ---
 
@@ -36,7 +38,7 @@ Triggered when user provides a book title. Execute all steps below sequentially.
 
 ### Mode B: Discussion Mode (triggered on follow-up questions)
 
-Triggered when the user asks questions about the book content **after** a digest has been produced.
+Triggered when the user asks questions about the book content **after** a digest has been produced (either via Mode A or Mode C).
 Examples: "为什么作者说…", "我不理解论点2", "这个概念和XXX有什么区别", "这个例子说明了什么".
 
 In Discussion Mode:
@@ -44,8 +46,55 @@ In Discussion Mode:
 - Reference the relevant argument, chapter, concept, or example from the digest
 - If the user's confusion touches a concept not covered in the digest, expand on it from the book's perspective
 - If the question requires comparing with another book or external framework, briefly note that and answer
-- End each discussion response with: `💬 还有疑问可以继续问，或输入新书名开始新的精读。`
 - Do NOT re-run the full digest — stay in Q&A mode until a new book title is given
+
+**Append-to-file behavior**: After each discussion answer, if a digest file was exported (either in this session or loaded via `/book-digest-discuss`), use **AskUserQuestion** to offer appending:
+
+```
+AskUserQuestion(
+  questions: [{
+    question: "是否将本次讨论内容追加到精读文件中？",
+    header: "追加内容",
+    multiSelect: false,
+    options: [
+      { label: "追加", description: "将本次问答追加到文件末尾的「讨论记录」章节" },
+      { label: "不需要", description: "跳过，继续讨论" },
+      { label: "不再询问", description: "本次会话内后续讨论都不追加，也不再询问" }
+    ]
+  }]
+)
+```
+
+If "追加":
+- Read the existing file
+- Append the Q&A under a `## 讨论记录` section (create if not exists). Each entry format:
+  - **HTML**: `<div class="discussion-entry"><p class="discussion-q">Q: {question}</p><div class="discussion-a">{answer}</div></div>` (insert before `</body>`)
+  - **Markdown**: `### Q: {question}` followed by the answer text (append at end)
+- Write the updated file back
+- Output: `✅ 已追加至 {filename}`
+
+If "不需要": proceed, ask again on next discussion answer.
+If "不再询问": set a session flag, never ask again for this session. End discussion responses with: `💬 还有疑问可以继续问，或输入新书名开始新的精读。`
+
+### Mode C: Resume Discussion (triggered by /book-digest-discuss)
+
+Triggered when the user provides a path to a previously exported digest file.
+
+```
+/book-digest-discuss <file-path>
+```
+
+Process:
+1. **Read the file**: Use the Read tool to load the `.html` or `.md` file
+2. **Parse context**: Extract the book title, core arguments, and key content from the file to establish discussion context
+3. **Confirm**: Output:
+   ```
+   📖 已加载《书名》精读文件
+   来源：{file-path}
+   已进入讨论模式，可以直接提问。
+   ```
+4. **Enter Discussion Mode (Mode B)**: All subsequent follow-up questions are handled by Mode B, with the loaded file as the append target
+5. End with: `💬 可以开始提问，例如「我不理解[概念]」或「展开[例子名称]」`
 
 ---
 
@@ -236,6 +285,8 @@ After the export decision, output:
 - 「这本书和《XXX》有什么区别」
 - 「论点X有什么批评或反驳」
 - 「第X章讲了什么」
+
+💡 下次可用 /book-digest-discuss {导出的文件名} 继续讨论本书
 ```
 
 ---
@@ -264,6 +315,7 @@ Layout and style requirements:
 - **Quotes** (Step 6): `border-left: 3px solid #c8a96e`, italic, `background: #fdf8f2`
 - **Insight items** (Step 7): `✦` marker in `#c8a96e`, action text bold, logic text in muted color
 - **Confidence badge**: colored chip — 高=`#4a7c5a` green, 中=`#c8730a` orange, 低=`#b03030` red
+- **Discussion entries** (appended via Mode B): `.discussion-entry` with `background: #f8f6f0`, `border-left: 3px solid #8b7355`, `border-radius: 6px`, `margin: 1em 0`, `padding: 1em 1.2em`; `.discussion-q` bold in `#5a7a6a`; `.discussion-a` normal weight
 - No external dependencies — all CSS inline in `<style>` tag
 
 After saving: `✅ 已保存至 {filename}`
