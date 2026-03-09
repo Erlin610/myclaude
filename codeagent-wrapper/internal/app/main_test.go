@@ -1455,6 +1455,60 @@ func TestBackendParseArgs_PromptFileOverridesAgent(t *testing.T) {
 	}
 }
 
+func TestBackendParseArgs_OutputFlag(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		want    string
+		wantErr bool
+	}{
+		{
+			name: "output flag",
+			args: []string{"codeagent-wrapper", "--output", "/tmp/out.json", "task"},
+			want: "/tmp/out.json",
+		},
+		{
+			name: "output equals syntax",
+			args: []string{"codeagent-wrapper", "--output=/tmp/out.json", "task"},
+			want: "/tmp/out.json",
+		},
+		{
+			name: "output trimmed",
+			args: []string{"codeagent-wrapper", "--output", "  /tmp/out.json  ", "task"},
+			want: "/tmp/out.json",
+		},
+		{
+			name:    "output missing value",
+			args:    []string{"codeagent-wrapper", "--output"},
+			wantErr: true,
+		},
+		{
+			name:    "output equals missing value",
+			args:    []string{"codeagent-wrapper", "--output=", "task"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			os.Args = tt.args
+			cfg, err := parseArgs()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cfg.OutputPath != tt.want {
+				t.Fatalf("OutputPath = %q, want %q", cfg.OutputPath, tt.want)
+			}
+		})
+	}
+}
+
 func TestBackendParseArgs_SkipPermissions(t *testing.T) {
 	const envKey = "CODEAGENT_SKIP_PERMISSIONS"
 	t.Setenv(envKey, "true")
@@ -3751,6 +3805,245 @@ noop`)
 	}
 }
 
+func TestRunSingleWithOutputFile(t *testing.T) {
+	defer resetTestHooks()
+
+	tempDir := t.TempDir()
+	outputPath := filepath.Join(tempDir, "single-output.json")
+
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"codeagent-wrapper", "--output", outputPath, "task"}
+
+	stdinReader = strings.NewReader("")
+	isTerminalFn = func() bool { return true }
+
+	origRunTaskFn := runTaskFn
+	runTaskFn = func(taskSpec TaskSpec, silent bool, timeoutSec int) TaskResult {
+		return TaskResult{
+			TaskID:    "single-task",
+			ExitCode:  0,
+			Message:   "single-result",
+			SessionID: "sid-single",
+		}
+	}
+	t.Cleanup(func() { runTaskFn = origRunTaskFn })
+
+	if code := run(); code != 0 {
+		t.Fatalf("run exit = %d, want 0", code)
+	}
+
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
+	if len(data) == 0 || data[len(data)-1] != '\n' {
+		t.Fatalf("output file should end with newline, got %q", string(data))
+	}
+
+	var payload struct {
+		Results []TaskResult `json:"results"`
+		Summary struct {
+			Total   int `json:"total"`
+			Success int `json:"success"`
+			Failed  int `json:"failed"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("failed to unmarshal output json: %v", err)
+	}
+
+	if payload.Summary.Total != 1 || payload.Summary.Success != 1 || payload.Summary.Failed != 0 {
+		t.Fatalf("unexpected summary: %+v", payload.Summary)
+	}
+	if len(payload.Results) != 1 {
+		t.Fatalf("results length = %d, want 1", len(payload.Results))
+	}
+	if payload.Results[0].Message != "single-result" {
+		t.Fatalf("result message = %q, want %q", payload.Results[0].Message, "single-result")
+	}
+}
+
+func TestRunSingleWithOutputFileOnFailureExitCode(t *testing.T) {
+	defer resetTestHooks()
+
+	tempDir := t.TempDir()
+	outputPath := filepath.Join(tempDir, "single-output-failed.json")
+
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"codeagent-wrapper", "--output", outputPath, "task"}
+
+	stdinReader = strings.NewReader("")
+	isTerminalFn = func() bool { return true }
+
+	origRunTaskFn := runTaskFn
+	runTaskFn = func(taskSpec TaskSpec, silent bool, timeoutSec int) TaskResult {
+		return TaskResult{
+			TaskID:   "single-task",
+			ExitCode: 7,
+			Message:  "failed-result",
+			Error:    "backend error",
+		}
+	}
+	t.Cleanup(func() { runTaskFn = origRunTaskFn })
+
+	if code := run(); code != 7 {
+		t.Fatalf("run exit = %d, want 7", code)
+	}
+
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
+	if len(data) == 0 || data[len(data)-1] != '\n' {
+		t.Fatalf("output file should end with newline, got %q", string(data))
+	}
+
+	var payload struct {
+		Results []TaskResult `json:"results"`
+		Summary struct {
+			Total   int `json:"total"`
+			Success int `json:"success"`
+			Failed  int `json:"failed"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("failed to unmarshal output json: %v", err)
+	}
+
+	if payload.Summary.Total != 1 || payload.Summary.Success != 0 || payload.Summary.Failed != 1 {
+		t.Fatalf("unexpected summary: %+v", payload.Summary)
+	}
+	if len(payload.Results) != 1 {
+		t.Fatalf("results length = %d, want 1", len(payload.Results))
+	}
+	if payload.Results[0].ExitCode != 7 {
+		t.Fatalf("result exit_code = %d, want 7", payload.Results[0].ExitCode)
+	}
+}
+
+func TestRunSingleWithOutputFileOnEmptyMessage(t *testing.T) {
+	defer resetTestHooks()
+
+	tempDir := t.TempDir()
+	outputPath := filepath.Join(tempDir, "single-output-empty.json")
+
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"codeagent-wrapper", "--output", outputPath, "task"}
+
+	stdinReader = strings.NewReader("")
+	isTerminalFn = func() bool { return true }
+
+	origRunTaskFn := runTaskFn
+	runTaskFn = func(taskSpec TaskSpec, silent bool, timeoutSec int) TaskResult {
+		return TaskResult{
+			TaskID:   "single-task",
+			ExitCode: 0,
+		}
+	}
+	t.Cleanup(func() { runTaskFn = origRunTaskFn })
+
+	if code := run(); code != 1 {
+		t.Fatalf("run exit = %d, want 1", code)
+	}
+
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
+	if len(data) == 0 || data[len(data)-1] != '\n' {
+		t.Fatalf("output file should end with newline, got %q", string(data))
+	}
+
+	var payload struct {
+		Results []TaskResult `json:"results"`
+		Summary struct {
+			Total   int `json:"total"`
+			Success int `json:"success"`
+			Failed  int `json:"failed"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("failed to unmarshal output json: %v", err)
+	}
+
+	if payload.Summary.Total != 1 || payload.Summary.Success != 0 || payload.Summary.Failed != 1 {
+		t.Fatalf("unexpected summary: %+v", payload.Summary)
+	}
+	if len(payload.Results) != 1 {
+		t.Fatalf("results length = %d, want 1", len(payload.Results))
+	}
+	if !strings.Contains(payload.Results[0].Error, "no output message:") {
+		t.Fatalf("result error = %q, want no output message", payload.Results[0].Error)
+	}
+}
+
+func TestRunParallelWithOutputFile(t *testing.T) {
+	defer resetTestHooks()
+	cleanupLogsFn = func() (CleanupStats, error) { return CleanupStats{}, nil }
+
+	tempDir := t.TempDir()
+	outputPath := filepath.Join(tempDir, "parallel-output.json")
+
+	oldArgs := os.Args
+	t.Cleanup(func() { os.Args = oldArgs })
+	os.Args = []string{"codeagent-wrapper", "--parallel", "--output", outputPath}
+
+	stdinReader = strings.NewReader(`---TASK---
+id: T1
+---CONTENT---
+noop`)
+	t.Cleanup(func() { stdinReader = os.Stdin })
+
+	origRunCodexTaskFn := runCodexTaskFn
+	runCodexTaskFn = func(task TaskSpec, timeout int) TaskResult {
+		return TaskResult{TaskID: task.ID, ExitCode: 0, Message: "parallel output marker"}
+	}
+	t.Cleanup(func() { runCodexTaskFn = origRunCodexTaskFn })
+
+	out := captureOutput(t, func() {
+		if code := run(); code != 0 {
+			t.Fatalf("run exit = %d, want 0", code)
+		}
+	})
+
+	if !strings.Contains(out, "=== Execution Report ===") {
+		t.Fatalf("stdout should keep summary format, got %q", out)
+	}
+
+	data, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
+	if len(data) == 0 || data[len(data)-1] != '\n' {
+		t.Fatalf("output file should end with newline, got %q", string(data))
+	}
+
+	var payload struct {
+		Results []TaskResult `json:"results"`
+		Summary struct {
+			Total   int `json:"total"`
+			Success int `json:"success"`
+			Failed  int `json:"failed"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("failed to unmarshal output json: %v", err)
+	}
+
+	if payload.Summary.Total != 1 || payload.Summary.Success != 1 || payload.Summary.Failed != 0 {
+		t.Fatalf("unexpected summary: %+v", payload.Summary)
+	}
+	if len(payload.Results) != 1 {
+		t.Fatalf("results length = %d, want 1", len(payload.Results))
+	}
+	if payload.Results[0].TaskID != "T1" {
+		t.Fatalf("result task_id = %q, want %q", payload.Results[0].TaskID, "T1")
+	}
+}
+
 func TestParallelInvalidBackend(t *testing.T) {
 	defer resetTestHooks()
 	cleanupLogsFn = func() (CleanupStats, error) { return CleanupStats{}, nil }
@@ -4342,9 +4635,9 @@ func TestRun_ExplicitStdinReadError(t *testing.T) {
 	if !strings.Contains(logOutput, "Failed to read stdin: broken stdin") {
 		t.Fatalf("log missing read error entry, got %q", logOutput)
 	}
-	// Log file is always removed after completion (new behavior)
-	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
-		t.Fatalf("log file should be removed after completion")
+	// Log file should remain for inspection; cleanup is handled via `codeagent-wrapper cleanup`.
+	if _, err := os.Stat(logPath); err != nil {
+		t.Fatalf("expected log file to exist after completion: %v", err)
 	}
 }
 
@@ -4357,6 +4650,51 @@ func TestRun_CommandFails(t *testing.T) {
 	defer restore()
 	if code := run(); code == 0 {
 		t.Errorf("expected non-zero")
+	}
+}
+
+func TestRun_NonZeroExitPrintsParsedMessage(t *testing.T) {
+	defer resetTestHooks()
+
+	tempDir := t.TempDir()
+	var scriptPath string
+	if runtime.GOOS == "windows" {
+		scriptPath = filepath.Join(tempDir, "codex.bat")
+		script := "@echo off\r\n" +
+			"echo {\"type\":\"thread.started\",\"thread_id\":\"tid\"}\r\n" +
+			"echo {\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"parsed-error\"}}\r\n" +
+			"exit /b 1\r\n"
+		if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+			t.Fatalf("failed to write script: %v", err)
+		}
+	} else {
+		scriptPath = filepath.Join(tempDir, "codex.sh")
+		script := `#!/bin/sh
+printf '%s\n' '{"type":"thread.started","thread_id":"tid"}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"parsed-error"}}'
+sleep 0.05
+exit 1
+`
+		if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+			t.Fatalf("failed to write script: %v", err)
+		}
+	}
+
+	restore := withBackend(scriptPath, func(cfg *Config, targetArg string) []string { return []string{} })
+	defer restore()
+
+	os.Args = []string{"codeagent-wrapper", "task"}
+	stdinReader = strings.NewReader("")
+	isTerminalFn = func() bool { return true }
+
+	var exitCode int
+	output := captureOutput(t, func() { exitCode = run() })
+	if exitCode != 1 {
+		t.Fatalf("exit=%d, want 1", exitCode)
+	}
+
+	if !strings.Contains(output, "parsed-error") {
+		t.Fatalf("stdout=%q, want parsed backend message", output)
 	}
 }
 
@@ -4439,9 +4777,9 @@ func TestRun_PipedTaskReadError(t *testing.T) {
 	if !strings.Contains(logOutput, "Failed to read piped stdin: read stdin: pipe failure") {
 		t.Fatalf("log missing piped read error, got %q", logOutput)
 	}
-	// Log file is always removed after completion (new behavior)
-	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
-		t.Fatalf("log file should be removed after completion")
+	// Log file should remain for inspection; cleanup is handled via `codeagent-wrapper cleanup`.
+	if _, err := os.Stat(logPath); err != nil {
+		t.Fatalf("expected log file to exist after completion: %v", err)
 	}
 }
 
@@ -4495,12 +4833,12 @@ func TestRun_LoggerLifecycle(t *testing.T) {
 	if !fileExisted {
 		t.Fatalf("log file was not present during run")
 	}
-	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
-		t.Fatalf("log file should be removed on success, but it exists")
+	if _, err := os.Stat(logPath); err != nil {
+		t.Fatalf("expected log file to exist on success: %v", err)
 	}
 }
 
-func TestRun_LoggerRemovedOnSignal(t *testing.T) {
+func TestRun_LoggerKeptOnSignal(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("signal-based test is not supported on Windows")
 	}
@@ -4514,7 +4852,8 @@ func TestRun_LoggerRemovedOnSignal(t *testing.T) {
 	defer signal.Reset(syscall.SIGINT, syscall.SIGTERM)
 
 	// Set shorter delays for faster test
-	_ = executor.SetForceKillDelay(1)
+	restoreForceKillDelay := executor.SetForceKillDelay(1)
+	defer restoreForceKillDelay()
 
 	tempDir := setTempDirEnv(t, t.TempDir())
 	logPath := filepath.Join(tempDir, fmt.Sprintf("codeagent-wrapper-%d.log", os.Getpid()))
@@ -4537,12 +4876,18 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"l
 	exitCh := make(chan int, 1)
 	go func() { exitCh <- run() }()
 
-	deadline := time.Now().Add(1 * time.Second)
+	ready := false
+	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(logPath); err == nil {
+		data, err := os.ReadFile(logPath)
+		if err == nil && strings.Contains(string(data), "Starting ") {
+			ready = true
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatalf("logger did not become ready before deadline")
 	}
 
 	if proc, err := os.FindProcess(os.Getpid()); err == nil && proc != nil {
@@ -4559,9 +4904,9 @@ printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"l
 	if exitCode != 130 {
 		t.Fatalf("exit code = %d, want 130", exitCode)
 	}
-	// Log file is always removed after completion (new behavior)
-	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
-		t.Fatalf("log file should be removed after completion")
+	// Log file should remain for inspection; cleanup is handled via `codeagent-wrapper cleanup`.
+	if _, err := os.Stat(logPath); err != nil {
+		t.Fatalf("expected log file to exist after completion: %v", err)
 	}
 }
 
@@ -4819,6 +5164,34 @@ func TestParallelLogPathInSerialMode(t *testing.T) {
 	wantLine := fmt.Sprintf("Log: %s", expectedLog)
 	if !strings.Contains(stderr, wantLine) {
 		t.Fatalf("stderr missing %q, got: %q", wantLine, stderr)
+	}
+}
+
+func TestRun_KeptLogFileOnSuccess(t *testing.T) {
+	defer resetTestHooks()
+
+	tempDir := setTempDirEnv(t, t.TempDir())
+
+	os.Args = []string{"codeagent-wrapper", "do-stuff"}
+	stdinReader = strings.NewReader("")
+	isTerminalFn = func() bool { return true }
+	codexCommand = createFakeCodexScript(t, "cli-session", "ok")
+	buildCodexArgsFn = func(cfg *Config, targetArg string) []string { return []string{} }
+	cleanupLogsFn = nil
+
+	var exitCode int
+	_ = captureStderr(t, func() {
+		_ = captureOutput(t, func() {
+			exitCode = run()
+		})
+	})
+	if exitCode != 0 {
+		t.Fatalf("run() exit = %d, want 0", exitCode)
+	}
+
+	expectedLog := filepath.Join(tempDir, fmt.Sprintf("codeagent-wrapper-%d.log", os.Getpid()))
+	if _, err := os.Stat(expectedLog); err != nil {
+		t.Fatalf("expected log file to exist: %v", err)
 	}
 }
 
