@@ -479,9 +479,17 @@ func extractNumberBefore(s string, idx int) int {
 }
 
 // extractKeyOutputFromLines extracts key output from pre-split lines.
+// maxLen=0 means unlimited; maxLen<0 returns "".
 func extractKeyOutputFromLines(lines []string, maxLen int) string {
-	if len(lines) == 0 || maxLen <= 0 {
+	if len(lines) == 0 || maxLen < 0 {
 		return ""
+	}
+
+	mayTruncate := func(s string) string {
+		if maxLen == 0 {
+			return s
+		}
+		return safeTruncate(s, maxLen)
 	}
 
 	// Priority 1: Look for explicit summary lines
@@ -498,7 +506,7 @@ func extractKeyOutputFromLines(lines []string, maxLen int) string {
 			}
 			content = strings.TrimSpace(content)
 			if len(content) > 0 {
-				return safeTruncate(content, maxLen)
+				return mayTruncate(content)
 			}
 		}
 	}
@@ -514,10 +522,10 @@ func extractKeyOutputFromLines(lines []string, maxLen int) string {
 		if len(line) < 20 {
 			continue
 		}
-		return safeTruncate(line, maxLen)
+		return mayTruncate(line)
 	}
 
-	// Fallback: truncate entire message
+	// Fallback: return entire message
 	clean := strings.TrimSpace(strings.Join(lines, "\n"))
-	return safeTruncate(clean, maxLen)
+	return mayTruncate(clean)
 }

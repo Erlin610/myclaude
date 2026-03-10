@@ -545,7 +545,7 @@ func runParallelMode(cmd *cobra.Command, args []string, opts *cliOptions, v *vip
 		results[i].CoverageNum = extractCoverageNum(results[i].Coverage)
 		results[i].FilesChanged = extractFilesChangedFromLines(lines)
 		results[i].TestsPassed, results[i].TestsFailed = extractTestResultsFromLines(lines)
-		results[i].KeyOutput = extractKeyOutputFromLines(lines, 150)
+		results[i].KeyOutput = extractKeyOutputFromLines(lines, 0)
 	}
 
 	if err := writeStructuredOutput(outputPath, results); err != nil {

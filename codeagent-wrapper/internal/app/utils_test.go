@@ -122,6 +122,33 @@ func TestSafeTruncate(t *testing.T) {
 	}
 }
 
+func TestExtractKeyOutputFromLines(t *testing.T) {
+	tests := []struct {
+		name   string
+		lines  []string
+		maxLen int
+		want   string
+	}{
+		{"empty lines returns empty", []string{}, 0, ""},
+		{"negative maxLen returns empty", []string{"hello world"}, -1, ""},
+		{"unlimited: summary prefix returned in full", []string{"Summary: all done with a very long description that exceeds 150 characters and should not be cut off at all"}, 0, "all done with a very long description that exceeds 150 characters and should not be cut off at all"},
+		{"unlimited: first meaningful line returned in full", []string{"this is a meaningful line that is longer than twenty chars and should not be truncated"}, 0, "this is a meaningful line that is longer than twenty chars and should not be truncated"},
+		{"unlimited: skips noise lines", []string{"---", "# heading", "short", "this is a meaningful line longer than twenty chars"}, 0, "this is a meaningful line longer than twenty chars"},
+		{"limited: summary prefix truncated", []string{"Summary: hello world truncated"}, 10, "hello w..."},
+		{"limited: first meaningful line truncated", []string{"this is a long meaningful line that will be truncated"}, 20, "this is a long me..."},
+		{"unlimited: fallback joins all lines", []string{"short", "also short"}, 0, "short\nalso short"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractKeyOutputFromLines(tt.lines, tt.maxLen)
+			if got != tt.want {
+				t.Fatalf("extractKeyOutputFromLines(%v, %d) = %q, want %q", tt.lines, tt.maxLen, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSanitizeOutput(t *testing.T) {
 	tests := []struct {
 		name string
