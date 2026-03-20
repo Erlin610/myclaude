@@ -87,12 +87,23 @@ cp -r E:\mine\m_projects\myclaude\skills\rrcc-course\ ~/.claude/skills/rrcc-cour
 cp E:\mine\m_projects\myclaude\memorys\CLAUDE.md ~/.claude/CLAUDE.md
 ```
 
-### 6. 推送 alin-dev
+### 6. 安装 models.json 配置
+```bash
+# 读取当前激活的模型版本
+CURRENT_MODEL=$(cat E:\mine\m_projects\myclaude\config\models\current.txt)
+
+# 安装对应版本的 models.json
+cp E:\mine\m_projects\myclaude\config\models\$CURRENT_MODEL.json ~/.codeagent/models.json
+
+echo "已安装 $CURRENT_MODEL 版本模型配置"
+```
+
+### 7. 推送 alin-dev
 ```bash
 git push origin alin-dev
 ```
 
-### 7. 生成更新报告
+### 8. 生成更新报告
 
 输出格式：
 ```
@@ -106,6 +117,7 @@ git push origin alin-dev
 - 合并了 X 个上游新提交
 - codeagent-wrapper: 旧版本 → 新版本
 - 更新的技能: omo, codeagent, rrcc-course
+- 模型配置: [claude|minimax]
 
 主要上游变更：
 [列出最近 5 个提交的标题]
@@ -117,6 +129,7 @@ git push origin alin-dev
 - 仓库: E:\mine\m_projects\myclaude
 - 工作分支: alin-dev
 - 配置: ~/.claude/
+- 模型配置: E:\mine\m_projects\myclaude\config\models/
 ```
 
 ## 错误处理
@@ -126,9 +139,29 @@ git push origin alin-dev
 - 如果 codeagent-wrapper 下载失败，保留旧版本并警告
 - 如果测试失败，报告具体错误但不回滚
 
+## 模型版本切换
+
+### 查看可用版本
+```bash
+ls E:\mine\m_projects\myclaude\config\models/
+cat E:\mine\m_projects\myclaude\config\models\current.txt
+```
+
+### 切换模型版本
+```bash
+# 切换到 claude 版本
+echo "claude" > E:\mine\m_projects\myclaude\config\models\current.txt
+cp E:\mine\m_projects\myclaude\config\models\claude.json ~/.codeagent/models.json
+
+# 切换到 minimax 版本
+echo "minimax" > E:\mine\m_projects\myclaude\config\models\current.txt
+cp E:\mine\m_projects\myclaude\config\models\minimax.json ~/.codeagent/models.json
+```
+
 ## 注意事项
 
 - 此命令会自动提交合并，无需用户确认
 - 建议在执行前确保 alin-dev 没有未提交的重要更改
 - 更新过程约需 1-2 分钟
 - 工作分支始终是 `alin-dev`，不要在 `master` 上做任何本地修改
+- 模型配置文件存储在 `config/models/` 目录，可通过修改 `current.txt` 切换版本

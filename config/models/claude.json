@@ -1,0 +1,89 @@
+{
+  "default_backend": "codex",
+  "default_model": "gpt-5.4",
+  "agents": {
+    "oracle": {
+      "backend": "claude",
+      "model": "claude-opus-4-5-20251101",
+      "description": "Technical advisor",
+      "yolo": true
+    },
+    "librarian": {
+      "backend": "claude",
+      "model": "claude-sonnet-4-6",
+      "description": "Researcher",
+      "yolo": true
+    },
+    "explore": {
+      "backend": "claude",
+      "model": "claude-haiku-4-5-20251001",
+      "description": "Code search"
+    },
+    "develop": {
+      "backend": "codex",
+      "model": "gpt-5.4",
+      "description": "codex develop",
+      "yolo": true,
+      "reasoning": "high"
+    },
+    "frontend-ui-ux-engineer": {
+      "backend": "gemini",
+      "description": "Frontend engineer"
+    },
+    "product-director": {
+      "backend": "gemini",
+      "model": "gemini-3.1-pro-preview",
+      "description": "Product Director - Business abstraction, MVP definition",
+      "yolo": true
+    },
+    "operations-architect": {
+      "backend": "gemini",
+      "model": "gemini-3.1-pro-preview",
+      "description": "Operations Architect - Process design, capacity planning",
+      "yolo": true
+    },
+    "tech-architect": {
+      "backend": "codex",
+      "model": "gpt-5.4",
+      "description": "Tech Architect - Architecture design, tech stack selection",
+      "yolo": true,
+      "reasoning": "high"
+    },
+    "business-architect": {
+      "backend": "gemini",
+      "model": "gemini-3.1-pro-preview",
+      "description": "Business Architect - Profit model, unit economics",
+      "yolo": true
+    },
+    "market-researcher": {
+      "backend": "gemini",
+      "model": "gemini-3.1-pro-preview",
+      "description": "Market Researcher - Demand validation, competitive analysis",
+      "yolo": true
+    },
+    "legal-advisor": {
+      "backend": "claude",
+      "model": "claude-sonnet-4-6",
+      "description": "Legal Advisor - Legal risks, compliance requirements",
+      "yolo": true
+    },
+    "code-explorer": {
+      "backend": "claude",
+      "model": "claude-sonnet-4-6",
+      "description": "Code explorer - Trace code, map architecture, find patterns"
+    },
+    "code-architect": {
+      "backend": "codex",
+      "model": "gpt-5.4",
+      "description": "Code Architect - Architecture design, tech selection, code structure planning",
+      "yolo": true,
+      "reasoning": "high"
+    },
+    "code-reviewer": {
+      "backend": "claude",
+      "model": "claude-sonnet-4-6",
+      "description": "Code Reviewer - Code review, issue detection, improvement suggestions",
+      "yolo": true
+    }
+  }
+}
