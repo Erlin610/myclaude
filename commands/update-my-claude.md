@@ -2,6 +2,14 @@
 
 当用户执行 `/update-my-claude` 时，自动执行 MyClaude 仓库和组件的完整更新流程。
 
+## 使用方式
+
+```bash
+/update-my-claude              # 执行完整更新流程
+/update-my-claude status       # 查看当前模型版本
+/update-my-claude switch <版本> # 切换模型版本 (claude | minimax)
+```
+
 ## 分支策略
 
 - `master`: 保持与 upstream/master 完全同步（只做 fast-forward）
@@ -12,89 +20,125 @@
 
 按以下步骤顺序执行，每步完成后报告状态：
 
-### 1. 检查当前状态
+### 1. 检查参数
+
+```bash
+# 解析参数
+ARG=$1  # status | switch | (空)
+VERSION=$2  # claude | minimax
+```
+
+### 2. 处理 status 命令
+```bash
+if [ "$ARG" = "status" ]; then
+  CURRENT=$(cat E:\mine\m_projects\myclaude\config\models\current.txt)
+  echo "当前模型版本: $CURRENT"
+  echo ""
+  echo "可用版本:"
+  ls E:\mine\m_projects\myclaude\config\models\*.json | xargs -I{} basename {} .json | grep -v current
+  exit 0
+fi
+```
+
+### 3. 处理 switch 命令
+```bash
+if [ "$ARG" = "switch" ]; then
+  TARGET_VERSION=$2
+  if [ -z "$TARGET_VERSION" ]; then
+    echo "错误: 请指定版本 (claude | minimax)"
+    exit 1
+  fi
+
+  if [ ! -f "E:\mine\m_projects\myclaude\config\models\$TARGET_VERSION.json" ]; then
+    echo "错误: 版本 '$TARGET_VERSION' 不存在"
+    echo "可用版本: claude, minimax"
+    exit 1
+  fi
+
+  # 更新 current.txt
+  echo "$TARGET_VERSION" > E:\mine\m_projects\myclaude\config\models\current.txt
+
+  # 安装对应版本的 models.json
+  cp E:\mine\m_projects\myclaude\config\models\$TARGET_VERSION.json ~/.codeagent/models.json
+
+  echo "✅ 已切换到 $TARGET_VERSION 版本"
+  echo ""
+  echo "配置详情:"
+  cat ~/.codeagent/models.json | grep -E '"default_backend"|"default_model"' | head -2
+
+  # 如果切换到 minimax，检查环境变量
+  if [ "$TARGET_VERSION" = "minimax" ]; then
+    if [ -z "$CLAUDE_CODE_GIT_BASH_PATH" ]; then
+      echo ""
+      echo "⚠️  提示: claude backend 需要设置 CLAUDE_CODE_GIT_BASH_PATH"
+      echo '   执行: export CLAUDE_CODE_GIT_BASH_PATH="E:\package\Git\Git\usr\bin\bash.exe"'
+    fi
+  fi
+
+  exit 0
+fi
+```
+
+### 4. 执行完整更新（默认）
+
+#### 4.1 检查当前状态
 ```bash
 cd E:\mine\m_projects\myclaude
 git fetch upstream
 git status
 ```
 
-确认当前在 `alin-dev` 分支。如果不在，先切换：`git checkout alin-dev`
+确认当前在 `alin-dev` 分支。
 
-### 2. 同步 master（永远不会冲突）
+#### 4.2 同步 master（永远不会冲突）
 ```bash
 git checkout master
 git merge upstream/master
 ```
 
-这一步永远是 fast-forward，不会有冲突。
+如果 master 没有新提交，告知用户已是最新版本。
 
-如果 master 没有新提交（`git log HEAD..upstream/master --oneline` 为空），告知用户已是最新版本并退出。
-
-### 3. 将上游更新合并到 alin-dev
+#### 4.3 将上游更新合并到 alin-dev
 ```bash
 git checkout alin-dev
 git merge master
 ```
 
 如果出现冲突：
-- 对于上游源码文件（`codeagent-wrapper/`, `skills/do/`, `memorys/`），优先使用上游版本：
-  ```bash
-  git checkout --theirs <conflicted-file>
-  git add <conflicted-file>
-  ```
-- 对于 `config.json`，手动合并：保留本地新增模块 + 上游新增模块
-- 对于本地定制文件（`skills/rrcc-course/`, `skills/think-tank/` 等），保留本地版本：
-  ```bash
-  git checkout --ours <conflicted-file>
-  git add <conflicted-file>
-  ```
-- 完成合并：
-  ```bash
-  git commit -m "Merge master into alin-dev: auto-update via /update-my-claude"
-  ```
+- 对于上游源码文件，优先使用上游版本
+- 对于本地定制文件，保留本地版本
 
-### 4. 更新 codeagent-wrapper
+#### 4.4 更新 codeagent-wrapper
 ```bash
-# 检查当前版本
 codeagent-wrapper --version
-
-# 下载最新版本
 curl -L -o "C:\Users\Administrator\bin\codeagent-wrapper.exe" \
   "https://github.com/cexll/myclaude/releases/latest/download/codeagent-wrapper-windows-amd64.exe"
-
-# 验证新版本
 codeagent-wrapper --version
 ```
 
-报告版本变化（如：v6.5.1 → v6.6.0）。
-
-### 5. 更新技能文件（从 alin-dev 分支安装）
+#### 4.5 更新技能文件
 ```bash
-# 确保在 alin-dev 分支
 git checkout alin-dev
-
-# 更新 omo 技能
 cp -r E:\mine\m_projects\myclaude\skills\omo\* ~/.claude/skills/omo/
-
-# 更新 codeagent 技能
 cp -r E:\mine\m_projects\myclaude\skills\codeagent\* ~/.claude/skills/codeagent/
-
-# 更新 rrcc-course 技能
 cp -r E:\mine\m_projects\myclaude\skills\rrcc-course\ ~/.claude/skills/rrcc-course/
-
-# 更新 CLAUDE.md（如果有变化）
 cp E:\mine\m_projects\myclaude\memorys\CLAUDE.md ~/.claude/CLAUDE.md
 ```
 
-### 6. 推送 alin-dev
+#### 4.6 安装当前模型配置
+```bash
+CURRENT_MODEL=$(cat E:\mine\m_projects\myclaude\config\models\current.txt)
+cp E:\mine\m_projects\myclaude\config\models\$CURRENT_MODEL.json ~/.codeagent/models.json
+echo "已安装 $CURRENT_MODEL 版本模型配置"
+```
+
+#### 4.7 推送 alin-dev
 ```bash
 git push origin alin-dev
 ```
 
-### 7. 生成更新报告
+### 5. 生成更新报告
 
-输出格式：
 ```
 ✅ MyClaude 更新完成
 
@@ -106,6 +150,7 @@ git push origin alin-dev
 - 合并了 X 个上游新提交
 - codeagent-wrapper: 旧版本 → 新版本
 - 更新的技能: omo, codeagent, rrcc-course
+- 模型配置: [当前版本]
 
 主要上游变更：
 [列出最近 5 个提交的标题]
@@ -117,6 +162,7 @@ git push origin alin-dev
 - 仓库: E:\mine\m_projects\myclaude
 - 工作分支: alin-dev
 - 配置: ~/.claude/
+- 模型配置: E:\mine\m_projects\myclaude\config\models/
 ```
 
 ## 错误处理
@@ -132,3 +178,4 @@ git push origin alin-dev
 - 建议在执行前确保 alin-dev 没有未提交的重要更改
 - 更新过程约需 1-2 分钟
 - 工作分支始终是 `alin-dev`，不要在 `master` 上做任何本地修改
+- 模型配置存储在 `config/models/`，通过 `current.txt` 记录当前版本

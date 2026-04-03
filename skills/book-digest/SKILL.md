@@ -1,6 +1,6 @@
 ---
 name: book-digest
-description: Book knowledge distillation skill. Input a book title, output core arguments, chapter structure, key examples, memorable quotes, and actionable insights. Supports .md/.html file export via interactive prompt and multi-turn discussion mode. Usage: /book-digest <book title>
+description: Book knowledge distillation skill. Input a book title, output core arguments, chapter structure, key examples, memorable quotes, and actionable insights. Supports .md/.html file export via interactive prompt and multi-turn discussion mode. Use /book-digest-discuss <file> to resume discussion from a previously exported digest. Usage: /book-digest <book title>
 ---
 
 # Book Digest — Knowledge Distillation Skill
@@ -22,9 +22,11 @@ All user-facing output and interaction must be in **Chinese**. Skill instruction
 
 ```
 /book-digest <书名>
+/book-digest-discuss <digest-file.html 或 digest-file.md>
 ```
 
-No flags. Format selection is handled interactively after the digest is generated.
+- `/book-digest <书名>`: Full digest mode. Format selection is handled interactively after the digest is generated.
+- `/book-digest-discuss <file>`: Resume discussion from a previously exported digest file. See Mode C below.
 
 ---
 
@@ -36,7 +38,7 @@ Triggered when user provides a book title. Execute all steps below sequentially.
 
 ### Mode B: Discussion Mode (triggered on follow-up questions)
 
-Triggered when the user asks questions about the book content **after** a digest has been produced.
+Triggered when the user asks questions about the book content **after** a digest has been produced (either via Mode A or Mode C).
 Examples: "为什么作者说…", "我不理解论点2", "这个概念和XXX有什么区别", "这个例子说明了什么".
 
 In Discussion Mode:
@@ -44,8 +46,55 @@ In Discussion Mode:
 - Reference the relevant argument, chapter, concept, or example from the digest
 - If the user's confusion touches a concept not covered in the digest, expand on it from the book's perspective
 - If the question requires comparing with another book or external framework, briefly note that and answer
-- End each discussion response with: `💬 还有疑问可以继续问，或输入新书名开始新的精读。`
 - Do NOT re-run the full digest — stay in Q&A mode until a new book title is given
+
+**Append-to-file behavior**: After each discussion answer, if a digest file was exported (either in this session or loaded via `/book-digest-discuss`), use **AskUserQuestion** to offer appending:
+
+```
+AskUserQuestion(
+  questions: [{
+    question: "是否将本次讨论内容追加到精读文件中？",
+    header: "追加内容",
+    multiSelect: false,
+    options: [
+      { label: "追加", description: "将本次问答追加到文件末尾的「讨论记录」章节" },
+      { label: "不需要", description: "跳过，继续讨论" },
+      { label: "不再询问", description: "本次会话内后续讨论都不追加，也不再询问" }
+    ]
+  }]
+)
+```
+
+If "追加":
+- Read the existing file
+- Append the Q&A under a `## 讨论记录` section (create if not exists). Each entry format:
+  - **HTML**: `<div class="discussion-entry"><p class="discussion-q">Q: {question}</p><div class="discussion-a">{answer}</div></div>` (insert before `</body>`)
+  - **Markdown**: `### Q: {question}` followed by the answer text (append at end)
+- Write the updated file back
+- Output: `✅ 已追加至 {filename}`
+
+If "不需要": proceed, ask again on next discussion answer.
+If "不再询问": set a session flag, never ask again for this session. End discussion responses with: `💬 还有疑问可以继续问，或输入新书名开始新的精读。`
+
+### Mode C: Resume Discussion (triggered by /book-digest-discuss)
+
+Triggered when the user provides a path to a previously exported digest file.
+
+```
+/book-digest-discuss <file-path>
+```
+
+Process:
+1. **Read the file**: Use the Read tool to load the `.html` or `.md` file
+2. **Parse context**: Extract the book title, core arguments, and key content from the file to establish discussion context
+3. **Confirm**: Output:
+   ```
+   📖 已加载《书名》精读文件
+   来源：{file-path}
+   已进入讨论模式，可以直接提问。
+   ```
+4. **Enter Discussion Mode (Mode B)**: All subsequent follow-up questions are handled by Mode B, with the loaded file as the append target
+5. End with: `💬 可以开始提问，例如「我不理解[概念]」或「展开[例子名称]」`
 
 ---
 
@@ -139,7 +188,64 @@ Format for each (6–10 examples for technical books, 4–6 for narrative books)
 
 ---
 
-## Step 6: Quotes
+## Step 6: Methodology Deep Dive (optional — for books with actionable methods)
+
+**Trigger**: Include this section when the book teaches **concrete, reproducible methods** — step-by-step processes, decision frameworks, analytical models, checklists, or systems that the reader can directly apply in practice.
+**Skip**: For purely theoretical, philosophical, or narrative books that argue ideas without prescribing specific operational methods.
+
+This section extracts the **operational core** of the book — the "干货" that would otherwise require reading hundreds of pages to piece together. The goal is to reproduce the author's methods with enough fidelity and detail that the reader can **actually use them without reading the original book**.
+
+Select 2–5 of the most important methods. For each:
+
+```
+🔧 方法：[方法名称]
+  出处：第X章 / Part X
+  目的：这个方法解决什么问题，在什么场景下使用（1–2 句话）
+
+  【步骤】
+  1. [第一步]：具体做什么，关键判断标准是什么
+  2. [第二步]：在第一步的基础上，下一步操作及其判断依据
+  3. ...（保留作者原始步骤顺序，不合并、不省略关键步骤）
+
+  【判断标准 / 决策规则】
+  - 当 [条件A] → [对应动作/结论]
+  - 当 [条件B] → [对应动作/结论]
+  - 当 [条件C] → [对应动作/结论]
+  （如作者提供了具体数值、阈值、信号，必须保留原始数值）
+
+  【常见误区】（如作者有提及）
+  - [误区1]：为什么错，正确做法是什么
+  - [误区2]：...
+
+  【配合工具/前提条件】（如适用）
+  - 需要什么数据、指标、图表、软件配合使用
+```
+
+### Depth requirements
+
+- **Preserve step sequence**: Faithfully follow the author's original order — do not rearrange or simplify away critical sub-steps
+- **Keep numbers and thresholds**: If the author says "when RSI drops below 30" or "limit to 2% of capital", keep the exact figures
+- **Explicit decision rules**: If the method involves "if X then Y" logic, list every branch the author describes, not just a summary
+- **Signal descriptions**: If the method involves reading charts / data / patterns / body language / any observable signal, describe **what to look for specifically** — shape, sequence, relative position, context
+- **Firm rules vs. flexible guidelines**: Clearly distinguish what the author treats as non-negotiable rules versus adjustable parameters
+
+### What qualifies as a "method"
+
+- Step-by-step analytical or operational processes (e.g., how to analyze a volume-price bar)
+- Decision frameworks with defined criteria (e.g., when to enter / exit / hold)
+- Diagnostic checklists (e.g., how to evaluate a company's moat)
+- Systematic models with defined inputs → processing → outputs
+- Negotiation / communication / management protocols with specific phases
+
+### What does NOT qualify (handle elsewhere)
+
+- General principles without specific steps → Step 3 (Core Arguments)
+- One-line takeaways → Step 8 (Actionable Insights)
+- Illustrative stories → Step 5 (Key Examples)
+
+---
+
+## Step 7: Quotes
 
 Cite verbatim sentences worth memorizing. For English-language books, show original English + Chinese translation.
 
@@ -156,7 +262,7 @@ For each quote, provide enough context that the reader understands not just what
 
 ---
 
-## Step 7: Actionable Insights
+## Step 8: Actionable Insights
 
 Extract what the reader can **directly do, think differently about, or watch for** after reading. Be specific enough that the insight is immediately applicable.
 
@@ -172,7 +278,7 @@ For each insight, include a brief explanation of the underlying logic so the rea
 
 ---
 
-## Step 8: Confidence Declaration
+## Step 9: Confidence Declaration
 
 Always append at the end:
 
@@ -189,7 +295,7 @@ Always append at the end:
 
 ---
 
-## Step 9: Export Prompt
+## Step 10: Export Prompt
 
 After the digest is complete, use the **AskUserQuestion** tool to ask about file export. Do NOT output a text prompt — invoke the tool directly.
 
@@ -220,11 +326,11 @@ AskUserQuestion(
 After receiving the user's answer:
 - If "HTML": write `{sanitized-title}-digest.html` to current working directory, then output `✅ 已保存至 {filename}`
 - If "Markdown": write `{sanitized-title}-digest.md` to current working directory, then output `✅ 已保存至 {filename}`
-- If "不需要": output nothing, proceed to Step 10
+- If "不需要": output nothing, proceed to Step 12
 
 ---
 
-## Step 10: Follow-up Prompt
+## Step 11: Follow-up Prompt
 
 After the export decision, output:
 
@@ -236,6 +342,8 @@ After the export decision, output:
 - 「这本书和《XXX》有什么区别」
 - 「论点X有什么批评或反驳」
 - 「第X章讲了什么」
+
+💡 下次可用 /book-digest-discuss {导出的文件名} 继续讨论本书
 ```
 
 ---
@@ -261,9 +369,11 @@ Layout and style requirements:
 - **Concept cards** (Step 2): `background: #eef3f0`, `border-left: 3px solid #5a7a6a`, `border-radius: 6px`
 - **Argument blocks** (Step 3): numbered badge in `#5a7a6a`, content in a light well
 - **Example cards** (Step 5): `background: #f0ede8`, `border-left: 4px solid #c8a96e`, `border-radius: 10px`; use sub-labels (背景 / 经过 / 核心信号 / 为什么重要) styled as small caps in `#999`
-- **Quotes** (Step 6): `border-left: 3px solid #c8a96e`, italic, `background: #fdf8f2`
-- **Insight items** (Step 7): `✦` marker in `#c8a96e`, action text bold, logic text in muted color
+- **Methodology cards** (Step 6): `background: #f0f5f2`, `border-left: 4px solid #4a7c5a`, `border-radius: 8px`; `🔧` icon in `#4a7c5a`; step numbers as bold ordered list; decision rules in a nested box with `background: #e8efe8`, `border-radius: 4px`; 误区 items in `color: #b03030`
+- **Quotes** (Step 7): `border-left: 3px solid #c8a96e`, italic, `background: #fdf8f2`
+- **Insight items** (Step 8): `✦` marker in `#c8a96e`, action text bold, logic text in muted color
 - **Confidence badge**: colored chip — 高=`#4a7c5a` green, 中=`#c8730a` orange, 低=`#b03030` red
+- **Discussion entries** (appended via Mode B): `.discussion-entry` with `background: #f8f6f0`, `border-left: 3px solid #8b7355`, `border-radius: 6px`, `margin: 1em 0`, `padding: 1em 1.2em`; `.discussion-q` bold in `#5a7a6a`; `.discussion-a` normal weight
 - No external dependencies — all CSS inline in `<style>` tag
 
 After saving: `✅ 已保存至 {filename}`
