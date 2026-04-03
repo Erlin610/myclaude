@@ -87,6 +87,29 @@
         ]
       }
     },
+    "forge": {
+      "type": "execution",
+      "enforcement": "suggest",
+      "priority": "high",
+      "promptTriggers": {
+        "keywords": [
+          "forge",
+          "自驱",
+          "自进化",
+          "自主完成",
+          "不达目的不罢休",
+          "autonomous goal",
+          "self-evolving",
+          "锻造"
+        ],
+        "intentPatterns": [
+          "\\bforge\\b",
+          "(自驱|自主|自动).*(完成|实现|达成)",
+          "(autonomous|self-evolving|relentless)",
+          "不达目的"
+        ]
+      }
+    },
     "prototype-prompt-generator": {
       "type": "domain",
       "enforcement": "suggest",
