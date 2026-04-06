@@ -1,0 +1,6 @@
+{
+  "name": "eth-crew",
+  "description": "Multi-role autonomous crew for building a verified ETH USDT contract auto-trading system based on SMC/ICT methodology. Built-in domain experts + self-evolving development loop.",
+  "version": "1.0.0",
+  "author": "myclaude"
+}

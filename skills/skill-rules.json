@@ -87,6 +87,27 @@
         ]
       }
     },
+    "eth-crew": {
+      "type": "execution",
+      "enforcement": "suggest",
+      "priority": "high",
+      "promptTriggers": {
+        "keywords": [
+          "eth-crew",
+          "ETH交易",
+          "合约交易系统",
+          "SMC交易",
+          "自动交易",
+          "ETH策略"
+        ],
+        "intentPatterns": [
+          "\\beth-crew\\b",
+          "ETH.*交易.*系统",
+          "SMC.*(交易|策略)",
+          "合约.*自动.*交易"
+        ]
+      }
+    },
     "forge": {
       "type": "execution",
       "enforcement": "suggest",
