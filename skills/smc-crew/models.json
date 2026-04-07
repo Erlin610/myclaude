@@ -1,0 +1,35 @@
+{
+  "_description": "Model backend configuration for SMC-Crew roles. Edit 'backend' values to change model allocation. Available: claude, codex, gemini.",
+  "_note": "Strategist uses claude by default for deep SMC reasoning. Engineer uses codex for adversarial cross-validation. Both must use DIFFERENT backend families to ensure genuine independent perspectives.",
+
+  "roles": {
+    "strategist": {
+      "backend": "claude",
+      "description": "SMC Strategy Expert — deep domain reasoning required. Recommended: claude (opus-level).",
+      "adversarial_pair": "engineer"
+    },
+    "engineer": {
+      "backend": "codex",
+      "description": "Quant Engineering Expert — code/math precision required. Recommended: codex. Must differ from strategist.",
+      "adversarial_pair": "strategist"
+    },
+    "developer": {
+      "backend": "codex",
+      "description": "Code Implementation — engineering execution. Recommended: codex."
+    },
+    "reviewer": {
+      "backend": "claude",
+      "description": "Dual Auditor (code + strategy consistency) — needs strategy understanding. Recommended: claude."
+    },
+    "risk-guard": {
+      "backend": "claude",
+      "description": "Risk Rules Enforcement — rule reasoning and edge cases. Recommended: claude."
+    },
+    "archivist": {
+      "backend": "codex",
+      "description": "Data Archiving and Report Generation — structured data processing. Recommended: codex."
+    }
+  },
+
+  "_adversarial_rule": "strategist.backend and engineer.backend MUST be different backend families. If you change one, verify they remain different. Shared backends eliminate the adversarial validation benefit."
+}

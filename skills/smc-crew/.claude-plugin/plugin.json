@@ -1,0 +1,6 @@
+{
+  "name": "smc-crew",
+  "version": "1.0.0",
+  "description": "Self-evolving multi-role SMC trading crew. Builds and optimizes ETH contract trading strategies through backtest iteration with a growing expert team.",
+  "author": "alin-dev"
+}
