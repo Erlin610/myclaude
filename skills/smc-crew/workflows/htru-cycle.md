@@ -106,51 +106,34 @@ Note: PARTIAL does not enter graveyard. The original hypothesis is closed with s
 
 **Execution order**: Shared knowledge base FIRST, then role-specific knowledge derived from it.
 
-### Step 1: Update shared knowledge base
+**Completion gate**: All HTRU-U work is consolidated into `consultations/htru-u-iteration-<N>.md` before any knowledge file is modified. This record is the single source of truth for what changed and why.
 
-All roles contribute. PM coordinates.
+### Step 1: PM produces `consultations/htru-u-iteration-<N>.md`
 
-```
-knowledge/shared/eth-instrument.md    ← ETH instrument characteristics (evidence-gated, see threshold below)
-knowledge/shared/market-facts.md      ← general validated facts
-knowledge/shared/failure-patterns.md  ← failure patterns
-knowledge/shared/breakthroughs.md     ← breakthroughs (if any)
-```
+PM takes the structured outputs from 9.1 (Strategist) and 9.2 (Engineer) and fills the HTRU-U record. Each shared file must have a status of either:
+- `updated` + content (ready to copy into the file)
+- `no-change` + specific reason (why no update is warranted this iteration)
 
-**ETH instrument update is evidence-gated, not mandatory.**
+**Evidence-gated files** (market-facts.md, eth-instrument.md) are allowed to legitimately remain no-change. Do not fabricate updates to silence the gate.
 
-Strategist asks: "Is there enough evidence this iteration to record an ETH characteristic?"
-The answer is frequently "no, not yet" — and that is correct.
-
-Record only when ALL conditions are met:
-- Sample ≥ 30 trades exhibiting the pattern
-- Pattern observed across at least 2 different market regimes (not just one trend run)
-- The observation is specific and measurable (not "ETH is volatile")
-
-If threshold not met: do not record. Note the observation in `research-agenda.md` as a question to watch.
-
-Format:
-```markdown
-## [MF-<id>] ETH Fact: <title>
-- Content: <specific fact>
-- Source: H-<id>, Iteration #<N>
-- Confidence: high/medium (based on X trade sample)
-- Validated period: <date range>
-```
+**The HTRU-U record is the completion artifact.** It must exist before any knowledge file is edited. PM does not edit any knowledge file in Step 1 — only produces the record.
 
 ### Step 2: Each role derives role-specific knowledge
 
-Each role reads the updated shared knowledge and extracts what is relevant to their domain:
+Each role reads their section of the HTRU-U record and applies updates to their own knowledge files:
+- `updated` files: apply the content from the record
+- `no-change` files: leave untouched
+- No role may edit a file that is not listed in the record
 
 ```
-knowledge/strategist/hypotheses.md      ← update hypothesis statuses
-knowledge/strategist/smc-knowledge.md   ← update SMC application insights
-knowledge/strategist/research-agenda.md ← update open questions
-knowledge/engineer/backtest-patterns.md ← update trusted backtest patterns
-knowledge/engineer/bias-blacklist.md    ← update bias blacklist
-knowledge/developer/code-patterns.md   ← update effective code patterns
-knowledge/developer/bug-rootcauses.md  ← record bug root causes
-knowledge/reviewer/audit-checklist.md  ← update audit checklist
+knowledge/strategist/hypotheses.md      ← update from 9.1 Strategist Section B
+knowledge/strategist/smc-knowledge.md   ← update from 9.1 Strategist Section B
+knowledge/strategist/research-agenda.md ← update from 9.1 Strategist Section B
+knowledge/engineer/backtest-patterns.md ← update from 9.2 Engineer Section B
+knowledge/engineer/bias-blacklist.md    ← update from 9.2 Engineer Section B
+knowledge/developer/code-patterns.md   ← update from 9.2 Engineer candidate entries
+knowledge/developer/bug-rootcauses.md  ← update from 9.2 Engineer candidate entries
+knowledge/reviewer/audit-checklist.md  ← update from Reviewer reflection (if dispatched)
 ```
 
 ### Step 3: Update graveyard.md (if hypothesis was falsified)

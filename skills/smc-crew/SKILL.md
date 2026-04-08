@@ -259,7 +259,7 @@ PM receives Founder's instruction and structures it into a measurable goal.
 
 ## Phase 2: RESEARCH
 
-PM dispatches Strategist and Engineer in parallel for independent assessment.
+PM dispatches Strategist and Engineer in parallel, plus Strategist-Challenger independently.
 
 ### Dispatch Strategist
 
@@ -293,6 +293,42 @@ Requirements:
 4. Output content for updating knowledge/strategist/hypotheses.md
 
 No vague directions. Every hypothesis must include specific timeframes, entry conditions, stop-loss placement, and take-profit targets.
+PROMPT
+```
+
+### Dispatch Strategist-Challenger (simultaneously, blind)
+
+```bash
+CODEAGENT_SKIP_PERMISSIONS=true codeagent-wrapper --backend <models.roles.strategist_challenger.backend> - smc-crew/consultations/strategist-challenger <<'PROMPT'
+[Inject full content of roles/strategist-challenger.md]
+
+## Constitution
+[Inject full smc-crew/smc-constitution.md content]
+
+## Memory Anchor
+[Inject full compass.md content]
+
+## Founder's Instruction (immutable)
+[Inject board.md IMMUTABLE ZONE]
+
+## Your Current Knowledge Base
+[Inject all files under knowledge/strategist/]
+
+## Team Shared Knowledge
+[Inject all files under knowledge/shared/]
+
+## Graveyard (what has already been falsified)
+[Inject full content of graveyard.md]
+
+## Task: Independent Hypothesis Formation
+
+The primary Strategist is proposing hypotheses right now. You do NOT see their output.
+
+Formulate your own independent hypothesis or set of hypotheses. Your job is to find directions the primary Strategist is likely to miss — orthogonal frameworks, challenged assumptions, or dismissed possibilities.
+
+Produce `consultations/strategist-challenger/iteration-<N>.md` per the role specification.
+
+Note: If you are genuinely aligned with what the primary Strategist will likely propose, explain WHY — do not simply agree. Your value is in the rigor of the reasoning, not in disagreement for its own sake.
 PROMPT
 ```
 
@@ -338,9 +374,49 @@ Produce output independently from Strategist. Do not reference their conclusions
 PROMPT
 ```
 
-### PM Consolidation
+### PM integration: Dual-Strategist Comparison
 
-Read both outputs. Merge disagreements. Update board.md and mission.json.
+After all three dispatches complete (Strategist + Strategist-Challenger + Engineer), PM produces a structured comparison:
+
+```markdown
+# Phase 2 Integration — Iteration <N>
+
+## Strategist Output Summary
+[1-2 sentence summary of primary Strategist's proposed hypothesis/direction]
+
+## Strategist-Challenger Output Summary
+[1-2 sentence summary of Challenger's orthogonal direction or agreement with reasoning]
+
+## Convergence / Divergence Assessment
+- [ ] Both agree on the same direction
+- [ ] Divergent — see rubric evaluation below
+
+## Rubric Evaluation (if divergent)
+
+| Criterion | Strategist | Challenger | Winner |
+|-----------|-----------|-----------|--------|
+| Fewer free parameters | | | |
+| Clearer falsifiability | | | |
+| Better separation from graveyard | | | |
+| Higher expected trade frequency | | | |
+| Less dependence on unvalidated priors | | | |
+| Lower overfitting risk (per Engineer) | | | |
+
+## Decision
+
+- [ ] Rubric selects a clear winner → proceed to Phase 3 with that direction
+- [ ] Rubric is tied or ambiguous (≥3 criteria unresolved) → **Founder escalation required**
+
+**If Founder escalation required**:
+PM writes a summary of both directions with the rubric table to `consultations/founder-escalation-iteration-<N>.md` and waits for Founder's decision. Founder's choice is logged with reasoning.
+
+## Integration Decision
+- Hypothesis to proceed to Phase 3: [H-ID from Strategist or Challenger]
+- Challenger's orthogonal direction: [stored in consultations/strategist-challenger/ for potential future testing]
+```
+
+**PM writes this to `consultations/phase2-integration-iteration-<N>.md` before Phase 3.**
+
 
 **Proceed to Phase 3 when**: both assessments received.
 
@@ -618,12 +694,46 @@ CODEAGENT_SKIP_PERMISSIONS=true codeagent-wrapper --backend <models.roles.strate
 
 Answer all questions per HTRU-R execution standard in roles/strategist.md.
 
+## Required Structured Output
+
+You MUST produce all of the following sections in your reflection report. Do NOT skip any section, even if the content is "no change + reason". Skipping a section is a process violation.
+
+### Section A: Shared Knowledge Candidates
+For EACH of the four shared knowledge files, provide:
+- **File**: `knowledge/shared/market-facts.md`
+  - Status: `updated` or `no-change`
+  - If updated: provide the new entry content (ready to copy-paste)
+  - If no-change: state the specific reason why no update is warranted this iteration
+- **File**: `knowledge/shared/failure-patterns.md`
+  - Status: `updated` or `no-change`
+  - If updated: provide the new entry content
+  - If no-change: state the specific reason
+- **File**: `knowledge/shared/breakthroughs.md`
+  - Status: `updated` or `no-change`
+  - If updated: provide the new entry content
+  - If no-change: state the specific reason
+- **File**: `knowledge/shared/eth-instrument.md`
+  - Status: `updated` or `no-change`
+  - If no-change: state the specific reason (evidence-gated — see HTRU-U threshold)
+
+### Section B: Strategist Knowledge Updates
+- Updated content for `knowledge/strategist/hypotheses.md` (full new/updated hypothesis entries)
+- Updated content for `knowledge/strategist/smc-knowledge.md` (if new insights)
+- Updated content for `knowledge/strategist/research-agenda.md` (if new open questions)
+
+### Section C: Hypothesis Verdict
+- Verdict: `VALIDATED` / `FALSIFIED` / `PARTIAL`
+- New hypothesis if needed (full format per HTRU-H standard)
+
+### Section D: Next Hypothesis Draft (if PARTIAL or FALSIFIED)
+Full parameters per HTRU-H format.
+
 Output:
-1. Reflection report
-2. Hypothesis verdict: VALIDATED / FALSIFIED / PARTIAL
-3. New insights (content ready for shared knowledge base)
-4. Next hypothesis (if PARTIAL or FALSIFIED)
-5. Updated content for all knowledge/strategist/ files
+1. Reflection report (answering all 6 HTRU-R questions)
+2. Section A: Shared knowledge candidates with per-file status (updated/no-change + content or reason)
+3. Section B: Strategist file updates
+4. Section C: Hypothesis verdict
+5. Section D: Next hypothesis draft (if applicable)
 PROMPT
 ```
 
@@ -649,22 +759,128 @@ CODEAGENT_SKIP_PERMISSIONS=true codeagent-wrapper --backend <models.roles.engine
 
 Answer all questions per HTRU-R execution standard in roles/engineer.md.
 
+## Required Structured Output
+
+You MUST produce all of the following sections. Do NOT skip any section.
+
+### Section A: Shared Knowledge Candidates
+- **File**: `knowledge/shared/failure-patterns.md`
+  - Status: `updated` or `no-change`
+  - If updated: provide the new entry content (cross-role failure patterns only)
+  - If no-change: state the specific reason
+
+### Section B: Engineer Knowledge Updates
+- Updated content for `knowledge/engineer/backtest-patterns.md`
+- Updated content for `knowledge/engineer/bias-blacklist.md`
+- Candidate bug root causes for `knowledge/developer/bug-rootcauses.md` (format: one entry per bug with exact code location and fix)
+- Candidate code patterns for `knowledge/developer/code-patterns.md` (format: one entry per pattern with rationale)
+
+### Section C: Architectural Recommendations
+Specific, prioritized recommendations for next iteration.
+
 Output:
-1. Backtest credibility assessment
-2. Overfitting risk assessment
-3. Architectural improvement suggestions
-4. Updated content for all knowledge/engineer/ files
+1. Backtest credibility assessment (answering all Engineer HTRU-R questions)
+2. Section A: Shared failure-patterns status (updated/no-change + content or reason)
+3. Section B: Engineer and Developer candidate knowledge entries
+4. Section C: Architectural recommendations
+PROMPT
+```
+
+### 9.2b Developer Reflection
+
+```bash
+CODEAGENT_SKIP_PERMISSIONS=true codeagent-wrapper --backend <models.roles.developer.backend> - smc-crew/knowledge/developer <<'PROMPT'
+[Inject full content of roles/developer.md]
+
+## Mission Anchor
+[Inject board.md IMMUTABLE ZONE]
+
+## Backtest Results
+[Inject latest entry from backtest-results.jsonl]
+
+## Your Current Knowledge Base
+[Inject all files under knowledge/developer/]
+
+## Task: HTRU-R Phase — Developer Reflection
+
+Answer all questions per HTRU-R execution standard in roles/developer.md.
+
+## Required Structured Output
+
+### Section A: Shared Knowledge Candidates
+- **File**: `knowledge/shared/failure-patterns.md`
+  - Status: `updated` or `no-change`
+  - If updated: provide the new entry content (implementation-execution failures that affect multiple roles)
+  - If no-change: state the specific reason
+
+### Section B: Developer Knowledge Updates
+- Candidate code patterns for `knowledge/developer/code-patterns.md`
+- Candidate bug root causes for `knowledge/developer/bug-rootcauses.md`
+
+Output:
+1. Developer reflection (answering all Developer HTRU-R questions)
+2. Section A: Shared failure-patterns status
+3. Section B: Developer candidate knowledge entries
 PROMPT
 ```
 
 ### 9.3 PM Executes HTRU-U (Knowledge Update)
 
-Follow the U phase in `workflows/htru-cycle.md`:
+## HTRU-U Completion Gate
 
-1. Update `knowledge/shared/` first (consolidate insights from both experts)
-2. Each role derives role-specific knowledge (Developer, Reviewer extract from Strategist+Engineer outputs)
-3. If hypothesis falsified → update `graveyard.md`
-4. Dispatch Archivist to append iteration data:
+**PM must produce a structured HTRU-U record BEFORE any role-specific knowledge is updated.**
+
+The file `consultations/htru-u-iteration-<N>.md` MUST exist and be complete before proceeding to Step 2 or Step 3. This is a hard gate — no role-specific knowledge files may be edited until this record is finalized.
+
+## Step 1: PM Produces `consultations/htru-u-iteration-<N>.md`
+
+PM consolidates the structured outputs from Phase 9.1 (Strategist), 9.2 (Engineer), and 9.2b (Developer) into a single HTRU-U record:
+
+```markdown
+# HTRU-U Record — Iteration <N>
+
+## Shared Knowledge Consolidation
+
+| File | Status | Content / Reason |
+|------|--------|-----------------|
+| knowledge/shared/market-facts.md | updated / no-change | [content or reason] |
+| knowledge/shared/failure-patterns.md | updated / no-change | [content or reason] |
+| knowledge/shared/breakthroughs.md | updated / no-change | [content or reason] |
+| knowledge/shared/eth-instrument.md | updated / no-change | [content or reason] |
+
+## Role-Specific Knowledge Checklist
+
+| File | Status | Source |
+|------|--------|--------|
+| knowledge/strategist/hypotheses.md | pending / updated | 9.1 Strategist |
+| knowledge/strategist/smc-knowledge.md | pending / updated / no-change | 9.1 Strategist |
+| knowledge/engineer/backtest-patterns.md | pending / updated | 9.2 Engineer |
+| knowledge/engineer/bias-blacklist.md | pending / updated | 9.2 Engineer |
+| knowledge/developer/bug-rootcauses.md | pending / updated | 9.2b Developer |
+| knowledge/developer/code-patterns.md | pending / updated | 9.2b Developer |
+
+## Hypothesis Verdict
+[From 9.1 Strategist]
+
+## Graveyard Update (if FALSIFIED)
+[Breakthrough angle + what this does NOT rule out — only if hypothesis was falsified]
+
+## HTRU-U Status
+- [ ] All shared knowledge files: status populated
+- [ ] All role-specific files: status populated
+- [ ] Graveyard entry written (if applicable)
+- [ ] Record saved to consultations/htru-u-iteration-<N>.md
+```
+
+## Step 2: Each Role Updates Their Own Knowledge Files
+
+PM dispatches each role to apply their own updates using the checklist above as the source of truth. No role may skip a file marked `updated` in the checklist.
+
+## Step 3: Graveyard (if FALSIFIED)
+
+If hypothesis was falsified, update `graveyard.md` using the Breakthrough angle from 9.1 Strategist.
+
+## Step 4: Dispatch Archivist
 
 ```bash
 CODEAGENT_SKIP_PERMISSIONS=true codeagent-wrapper --backend <models.roles.archivist.backend> - smc-crew/data <<'PROMPT'
@@ -843,10 +1059,11 @@ stagnation_count ≥ 3 (no improvement for 3 consecutive iterations):
 
 strategy_pivots ≥ 5 (5 pivots with no breakthrough):
   → Deep consultation mode
-  → Dispatch Strategist (claude backend) for full knowledge base review
-  → Key question: "What fundamental assumption am I making that might be wrong?"
-  → Do NOT treat this as "nothing works" — treat it as "I haven't found the right angle yet"
-  → Results written to knowledge/shared/breakthroughs.md
+  → Dispatch BOTH Strategist (claude) AND Strategist-Challenger (codex) in parallel for full knowledge base review
+  → Key question (both): "What fundamental assumption am I making that might be wrong?"
+  → Both outputs written to consultations/strategist-challenger/deep-consultation-iteration-<N>.md
+  → PM produces rubric evaluation comparing both perspectives
+  → Do NOT treat this as "nothing works" — treat it as "we haven't found the right angle yet"
   → stagnation_count reset to 0
 ```
 
