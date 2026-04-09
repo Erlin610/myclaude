@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "created": "",
+  "status": "active",
+  "_status_values": "active | paused | aborted | completed — lifecycle only; phase tracked by current_phase",
+
+  "goal": "",
+  "instrument": "ETHUSDT_PERP",
+  "capital_usdt": 100,
+  "max_margin_per_trade": 5,
+  "target_weekly_min": 50,
+  "target_weekly_ideal": 100,
+  "target_monthly_min": 200,
+  "target_monthly_ideal": 400,
+
+  "current_phase": "INTAKE",
+  "current_stage": "",
+  "current_iteration": 0,
+  "current_step": "",
+  "next_action": "开始 Phase 1: INTAKE，读取 Founder 指令",
+  "test_phase": "A",
+
+  "htru_state": {
+    "active_hypotheses": [],
+    "pending_hypotheses": [],
+    "validated_count": 0,
+    "falsified_count": 0,
+    "current_hypothesis_id": null,
+    "hypothesis_status": null
+  },
+
+  "metrics_latest": {
+    "weekly_avg_profit": null,
+    "monthly_avg_profit": null,
+    "win_rate": null,
+    "profit_factor": null,
+    "sharpe_ratio": null,
+    "max_drawdown_pct": null,
+    "max_single_loss": null,
+    "total_trades": null,
+    "trades_per_week": null
+  },
+  "metrics_history": [],
+
+  "stagnation_count": 0,
+  "strategy_pivots": 0,
+  "dead_end_count": 0,
+  "expert_conflicts": 0,
+  "human_escalations": 0,
+
+  "knowledge_entries": {
+    "shared_market_facts": 0,
+    "shared_failure_patterns": 0,
+    "shared_breakthroughs": 0,
+    "strategist_hypotheses": 0,
+    "strategist_smc_knowledge": 0,
+    "engineer_backtest_patterns": 0,
+    "developer_code_patterns": 0,
+    "reviewer_audit_patterns": 0
+  },
+
+  "verification_layers": {
+    "layer1_basic": "PENDING",
+    "layer2_robustness": "PENDING",
+    "layer3_stress": "PENDING",
+    "layer4_expert_final": "PENDING"
+  },
+
+  "last_completed": "",
+  "last_updated": "",
+  "last_active_role": "",
+  "last_output_path": ""
+}

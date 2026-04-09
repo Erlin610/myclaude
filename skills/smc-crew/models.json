@@ -1,0 +1,40 @@
+{
+  "_description": "Model backend configuration for SMC-Crew roles. Edit 'backend' values to change model allocation. Available: claude, codex, gemini.",
+  "_note": "Strategist uses claude by default for deep SMC reasoning. Engineer uses codex for adversarial cross-validation. Both must use DIFFERENT backend families to ensure genuine independent perspectives.",
+
+  "roles": {
+    "strategist": {
+      "backend": "claude",
+      "description": "Primary SMC Strategy Expert — deep domain reasoning, synthesis, mainstream hypothesis building. Recommended: claude.",
+      "adversarial_pair": "strategist_challenger"
+    },
+    "strategist_challenger": {
+      "backend": "codex",
+      "description": "Challenger SMC Strategy Expert — orthogonal thinking, assumption attacks, alternative frameworks. Must differ from strategist. Recommended: codex.",
+      "adversarial_pair": "strategist"
+    },
+    "engineer": {
+      "backend": "codex",
+      "description": "Quant Engineering Expert — code/math precision required. Recommended: codex. Must differ from strategist.",
+      "adversarial_pair": "strategist"
+    },
+    "developer": {
+      "backend": "codex",
+      "description": "Code Implementation — engineering execution. Recommended: codex."
+    },
+    "reviewer": {
+      "backend": "claude",
+      "description": "Dual Auditor (code + strategy consistency) — needs strategy understanding. Recommended: claude."
+    },
+    "risk-guard": {
+      "backend": "claude",
+      "description": "Risk Rules Enforcement — rule reasoning and edge cases. Recommended: claude."
+    },
+    "archivist": {
+      "backend": "codex",
+      "description": "Data Archiving and Report Generation — structured data processing. Recommended: codex."
+    }
+  },
+
+  "_adversarial_rule": "strategist.backend and strategist_challenger.backend MUST be different backend families. strategist.backend and engineer.backend MUST be different backend families. If you change any backend, verify all three constraints remain satisfied. Shared backends eliminate the adversarial validation benefit."
+}
