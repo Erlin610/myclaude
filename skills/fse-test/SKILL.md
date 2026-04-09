@@ -1,6 +1,6 @@
 ---
 name: fse-test
-description: Functional testing skill. Works both integrated in the FSE pipeline and as a fully standalone tool for QA team members. Builds a Navigation Map from the frontend project so Playwright tests navigate by known paths (never exploring blindly). Three test case sources — pre-generated from requirements, derived from Lanhu design, or manual user input. API testing (curl) for backend mode, browser flow testing (Playwright MCP) for frontend/full mode. Defects trigger fix + code review cycle (max 3 rounds).
+description: Functional testing skill. Works both integrated in the FSE pipeline and as a fully standalone tool for QA team members. Builds a Navigation Map from the frontend project so Playwright tests navigate by known paths (never exploring blindly). Three test case sources — pre-generated from requirements, derived from Lanhu design, or manual user input. API testing (curl) for backend mode, browser flow testing (pre-generated @playwright/test scripts executed in parallel) for frontend/full mode. MCP browser retained only for failure investigation. Defects trigger fix + code review cycle (max 3 rounds).
 ---
 
 # FSE-Test — Functional Testing
@@ -16,12 +16,12 @@ Two execution contexts:
 ## Hard Constraints
 
 1. **Tests derive from real sources** — every test traces to a confirmed requirement, a Lanhu flow, or an explicit user-described scenario. Never fabricate scenarios.
-2. **Playwright MCP required for browser mode** — if unavailable, BLOCK immediately.
-3. **Navigation Map required for browser mode** — never run Playwright tests without a map. A test agent without a map is a new employee on their first day, clicking around randomly.
+2. **Navigation Map required for browser mode** — never generate Playwright spec files without a map. A test agent without a map is a new employee on their first day, clicking around randomly.
+3. **@playwright/test is the primary browser test runner** — pre-generated `.spec.ts` files run via `npx playwright test`. Playwright MCP is ONLY for failure investigation and screenshot capture. Never execute browser tests step-by-step via MCP as the primary path.
 4. **Fix cycle always includes code review** — same quality gate as `fse-dev`.
 5. **Max fix rounds: 3.** After that, escalate to user.
 6. **All user-facing questions MUST use `AskUserQuestion` tool.**
-7. **NEVER tell the user to manually start services.** When services are DOWN in a local environment, the skill MUST use `workspace.py start-services` to start them automatically after confirmation. Printing "请手动启动" or "请先启动项目" is FORBIDDEN. If auto-start fails after two retries, THEN ask the user for help.
+7. **NEVER tell the user to manually start services in remote env.** For local env, SHOW the start commands and ask the user to start manually — do NOT auto-start. Printing the start command IS the help. If services are still DOWN after user confirms restart, repeat the check once more.
 8. **NEVER ask the user which port a service runs on.** All ports are registered in workspace.json. Use `list-projects` to read them. If a port is missing from workspace.json, ask once and save it — do not ask on every run.
 
 ---
@@ -39,6 +39,25 @@ python "$HOME/.claude/skills/fse/scripts/workspace.py" status 2>/dev/null
   - Read mode from workspace: `python "$HOME/.claude/skills/fse/scripts/workspace.py" get-mode`
 
 **NOT_FOUND** → **Standalone mode**: continue with Step 0B.
+
+#### Derive TEST_DIR (both modes — do this immediately after context detection)
+
+```bash
+# Anchor to project root — TEST_DIR is relative to cwd
+echo "Working directory: $(pwd)"
+FEATURE_ID=$(python "$HOME/.claude/skills/fse/scripts/workspace.py" get-feature-id 2>/dev/null)
+if [ -z "$FEATURE_ID" ] || [ "$FEATURE_ID" = "NOT_SET" ]; then
+  FEATURE_ID="standalone-$(date +%Y%m%d-%H%M%S)"
+fi
+TEST_DIR=".fullstack/tests/$FEATURE_ID"
+mkdir -p "$TEST_DIR/bugs" "$TEST_DIR/specs" "$TEST_DIR/test-results"
+echo "TEST_DIR: $TEST_DIR"
+echo "FEATURE_ID: $FEATURE_ID"
+```
+
+> **All test output for this session goes under `$TEST_DIR/`.** Different features/requirements never overwrite each other. The navigation map (`.fullstack/testing/navigation-map.md`) is shared across sessions since it reflects the frontend codebase, not a specific feature.
+>
+> **Variable substitution rule**: `$FEATURE_ID` and `$TEST_DIR` are shell variables set above. Before ANY `codeagent-wrapper` call in subsequent steps, mentally substitute their actual values into the prompt text. Never pass the literal string `$FEATURE_ID` or `$TEST_DIR` to codeagent — always use the resolved value (e.g. `feat-login-20250115` or `.fullstack/tests/feat-login-20250115`).
 
 ---
 
@@ -76,7 +95,7 @@ Use `AskUserQuestion`:
 ```
 选择测试类型:
   1. 接口测试 (API) — HTTP 请求验证后端接口
-  2. 页面流程测试 (Browser) — 浏览器模拟用户操作
+  2. 页面流程测试 (Browser) — Playwright 脚本并行执行
   3. 两者都测
 ```
 
@@ -89,10 +108,17 @@ python "$HOME/.claude/skills/fse/scripts/workspace.py" set-mode <backend|fronten
 Use `AskUserQuestion`:
 ```
 测试用例来源:
-  1. 已有文件 — 使用 .fullstack/tests/test-cases.md（由 fse-requirements 生成）
+  1. 我的文件 — 提供测试用例文件路径（支持任意格式：md、txt、Excel 描述、Word 内容）
   2. 蓝湖设计稿 — 提供蓝湖 URL，AI 自动分析需求/设计稿生成用例
   3. 手动描述 — 直接描述要测试的业务场景，AI 结构化为用例
 ```
+
+If source 1 selected, ask:
+```
+请提供测试用例文件的绝对路径（如 D:/projects/test-cases.md）：
+```
+
+Read the file at the provided path. AI will parse it regardless of format — structured BDD, simple list, numbered steps, or free-form description. Then copy/convert content into `$TEST_DIR/test-cases.md` as the working copy.
 
 Store choice; used in Step 2.
 
@@ -185,16 +211,14 @@ python "$HOME/.claude/skills/fse/scripts/workspace.py" add-test-account \
 
 ---
 
-### 0D — Service Check and Account Validation (both modes)
-
-#### Check all registered services
+### 0D — Service Check (both modes)
 
 ```bash
 python "$HOME/.claude/skills/fse/scripts/workspace.py" check-services
 ENV_TYPE=$(python "$HOME/.claude/skills/fse/scripts/workspace.py" get-test-env | grep "^type:" | awk '{print $2}')
 ```
 
-**If all services are UP** → proceed to account validation.
+**If all services are UP** → proceed to Step 1.
 
 **If any service is DOWN and `ENV_TYPE=remote`**:
 ```
@@ -221,7 +245,7 @@ After user selects option 1, re-scan:
 python "$HOME/.claude/skills/fse/scripts/workspace.py" check-services
 ```
 
-- All UP → proceed to testing (Step 1).
+- All UP → proceed to Step 1.
 - Still DOWN → repeat `AskUserQuestion` (show which are still DOWN).
 
 > **Account credentials are NOT pre-validated.** Skip straight to testing.
@@ -246,9 +270,9 @@ A Navigation Map is a structured document that tells the test agent:
 - **WHAT** is on each page: buttons (exact text), form fields (label + constraints)
 - **HOW** to navigate there: step-by-step from login
 
-Without it, Playwright starts each test as a new user who has never seen the app —
-spending tokens exploring menus, guessing selectors, failing on renamed buttons.
-With it, every step is pre-resolved before execution begins.
+Without it, Playwright spec files must hardcode guesses about selectors and routes —
+getting it wrong means brittle tests. With it, spec generation has all exact element texts,
+routes, and flow sequences before writing a single line of code.
 
 ### 1A — Check existence and freshness
 
@@ -260,7 +284,7 @@ test -f .fullstack/testing/navigation-map.md && echo "EXISTS" || echo "MISSING"
 
 **If EXISTS**: check staleness against frontend git history:
 ```bash
-MAP_DATE=$(grep "^Generated:" .fullstack/testing/navigation-map.md | head -1 | sed 's/Generated: //')
+MAP_DATE=$(grep "^Generated:" .fullstack/testing/navigation-map.md | head -1 | sed 's/Generated: //' | tr 'T' ' ')
 git -C <frontend_path> log --since="$MAP_DATE" --oneline \
   -- src/router/ src/components/Sidebar* src/components/Nav* src/layout/ 2>/dev/null | head -3
 ```
@@ -278,9 +302,9 @@ git -C <frontend_path> log --since="$MAP_DATE" --oneline \
 codeagent-wrapper --agent code-explorer - <frontend_path> <<'EOF'
 Generate a Navigation Map for this frontend application.
 
-PURPOSE: This document is used as context by a Playwright test agent so it can navigate
-the app by known paths instead of exploring from scratch on every test run. Be specific
-and concrete — every piece of information must be verifiable in the source code.
+PURPOSE: This document is used as context by a codeagent that generates Playwright
+.spec.ts test files. Every piece of information must be verifiable in the source code —
+exact route paths, exact button texts (Chinese), exact form field labels.
 
 STEP 1 — Router Analysis
 Find and read the router definition file(s): src/router/index.ts, src/router/routes.ts,
@@ -401,24 +425,61 @@ EOF
 
 ## Step 2 — Test Cases
 
-### 2A — Pre-generated file (pipeline default OR standalone source choice 1)
+### 2A — User-provided file OR pipeline pre-generated file
+
+**Standalone mode (source choice 1)**: user already provided a file path in Step 0B.
 
 ```bash
-test -f .fullstack/tests/test-cases.md && echo "FOUND" || echo "MISSING"
+# Read the user-provided file (any format)
+cat "<user_provided_path>"
 ```
 
-If FOUND:
+Parse the content — accept any of these formats without requiring conversion upfront:
+- BDD (Given/When/Then)
+- Numbered list (`1. 登录系统 → 验证跳转到首页`)
+- Table (`| TC-001 | 创建用户 | 填写姓名… | 列表可见 |`)
+- Free-form paragraphs describing test scenarios
+
+Copy to working path:
+```bash
+cp "<user_provided_path>" "$TEST_DIR/test-cases.md"
 ```
-已加载测试用例文件：<N> 条用例（.fullstack/tests/test-cases.md）
+
+If the format is non-standard, normalize inline:
+```bash
+codeagent-wrapper --agent code-architect - . <<'EOF'
+Normalize the test cases in $TEST_DIR/test-cases.md into structured BDD format.
+
+Rules:
+- Preserve ALL original test intent — do not add or remove scenarios
+- Map each scenario to: TC ID, name, type (happy_path/sad_path/boundary/permission), priority (P0/P1/P2), Given/When/Then
+- Use CONCRETE navigation steps from .fullstack/testing/navigation-map.md if it exists
+- If nav map does not exist yet, keep steps abstract — they will be concretized in Step 4C spec generation
+- Output: overwrite $TEST_DIR/test-cases.md with normalized content + summary table at top
+EOF
+```
+
+```
+已加载测试用例：<N> 条用例（来源：<user_provided_path>）
 ```
 Skip to Step 3.
 
-If MISSING and pipeline mode: warn and fall through to generate from requirements:
+---
+
+**Pipeline mode**: check for pre-generated file:
+
+```bash
+test -f "$TEST_DIR/test-cases.md" && echo "FOUND" || echo "MISSING"
+```
+
+If FOUND → skip to Step 3.
+
+If MISSING → warn and generate from requirements:
 ```
 未找到预生成测试用例，将从 confirmed.md 实时生成。
 ```
 
-Then run the BDD generation prompt from fse-requirements Step 5.5 inline, writing to `.fullstack/tests/test-cases.md`.
+Then run the BDD generation prompt from fse-requirements Step 5.5 inline, writing to `$TEST_DIR/test-cases.md`.
 
 ### 2B — Generate from Lanhu (standalone source choice 2)
 
@@ -433,6 +494,7 @@ Inputs:
 - Navigation map: .fullstack/testing/navigation-map.md
 
 For each user flow found in Lanhu, generate minimum THREE test cases:
+
 
 TC-<MODULE>-<N>-01 (Happy Path):
   fr_ref: <Lanhu flow name>
@@ -458,7 +520,7 @@ Also add per-feature:
   TC-STATE-xxx: illegal state transition → error (if stateful entity exists)
 
 Use CONCRETE navigation steps from the navigation map. No abstract steps.
-Write to .fullstack/tests/test-cases.md with summary table at top.
+Write to $TEST_DIR/test-cases.md with summary table at top.
 EOF
 ```
 
@@ -490,13 +552,13 @@ For each scenario generate:
 - 1 sad path (error or permission failure)
 - BVA cases for any mentioned input fields (min/max boundaries)
 
-Write to .fullstack/tests/test-cases.md with summary table.
+Write to $TEST_DIR/test-cases.md with summary table.
 EOF
 ```
 
 ---
 
-## Step 3 — Mark state, select scope, and route
+## Step 3 — Mark State, Select Scope, and Route
 
 If in FSE pipeline:
 ```bash
@@ -514,7 +576,7 @@ Use `AskUserQuestion`:
 
 In pipeline mode: always run full scope.
 
-If **冒烟测试** selected: filter test plan to P0 cases only before execution.
+If **冒烟测试** selected: filter test plan to P0 cases only before spec generation.
 
 Route based on mode:
 - `backend` → **Backend API Testing Path**
@@ -536,7 +598,7 @@ python "$HOME/.claude/skills/fse/scripts/workspace.py" get-test-config
 codeagent-wrapper --agent code-architect - . <<'EOF'
 Generate a complete API test plan.
 
-PRIMARY INPUT (load if exists): .fullstack/tests/test-cases.md
+PRIMARY INPUT (load if exists): $TEST_DIR/test-cases.md
   — Extract API-testable cases. Add HTTP execution detail to each.
 
 SUPPLEMENTARY:
@@ -566,7 +628,7 @@ Mandatory methodology coverage:
     - Wrong-role token → expect 403
     - Valid token + wrong-owner ID → expect 403 (IDOR check)
 
-Write to .fullstack/tests/api-test-plan.md
+Write to $TEST_DIR/api-test-plan.md
 Include summary table at top: | TC ID | Type | Priority | Endpoint | Description |
 EOF
 ```
@@ -575,7 +637,7 @@ EOF
 
 ```bash
 codeagent-wrapper --agent develop - <backend_path> <<'EOF'
-Execute all API test cases from .fullstack/tests/api-test-plan.md
+Execute all API test cases from $TEST_DIR/api-test-plan.md
 
 Backend base URL: <test_config.base_url>
 Auth accounts: <test_config.accounts as JSON>
@@ -585,7 +647,7 @@ For each test case:
 2. Assert: status code matches, response body contains expected fields
 3. Record: PASS or FAIL with specific reason (status mismatch / missing field / wrong value)
 
-Write results to .fullstack/tests/api-results-round-<N>.md
+Write results to $TEST_DIR/api-results-round-<N>.md
 Print summary: <pass_count> passed / <fail_count> failed
 EOF
 ```
@@ -596,92 +658,226 @@ Proceed to **Fix Cycle** for any failures.
 
 ## Browser Flow Testing Path (modes: frontend, full, frontend-ext, or standalone browser choice)
 
-### Verify Playwright MCP
+### Step 4A — Initialize Playwright Workspace
+
+Check for existing Playwright installation in `.fullstack/playwright/`:
 
 ```bash
-claude mcp list 2>/dev/null | grep -i playwright | head -3 || echo "MCP_MISSING"
+test -f .fullstack/playwright/package.json && echo "EXISTS" || echo "MISSING"
 ```
 
-If MCP_MISSING:
-```
-阻断：Playwright MCP 未找到。
-请检查：claude mcp list — 确认 'playwright' 已列出并运行。
-启用后重新执行 /fse-test。
-```
-
-### Generate browser test plan with navigation context
+**If MISSING** — create the isolated Playwright workspace:
 
 ```bash
-python "$HOME/.claude/skills/fse/scripts/workspace.py" get-test-config
+mkdir -p .fullstack/playwright/tests
 ```
 
+Write `.fullstack/playwright/package.json`:
+```json
+{
+  "name": "fse-playwright-tests",
+  "version": "1.0.0",
+  "private": true,
+  "devDependencies": {
+    "@playwright/test": "^1.40.0"
+  }
+}
+```
+
+Install dependencies and download browser:
 ```bash
-codeagent-wrapper --agent code-architect - . <<'EOF'
-Generate a Playwright browser test plan.
+cd .fullstack/playwright && npm install && npx playwright install chromium
+```
 
-INPUTS:
-- Test cases (primary): .fullstack/tests/test-cases.md
-- Navigation map (REQUIRED): .fullstack/testing/navigation-map.md
-- Base URL: <test_config.base_url>
-- Test accounts: <test_config.accounts>
+> **Browser binary reuse**: If `@playwright/mcp` is installed globally, check whether its Chromium binary can be reused. Run `npx playwright install chromium` anyway — it is a no-op if the binary already exists.
 
-CRITICAL: Every step must use CONCRETE information from the navigation map.
-  WRONG: "Navigate to the training page"
-  RIGHT: "Navigate to <base_url>/interaction/training/list"
-  WRONG: "Click the create button"
-  RIGHT: "Click button with text '创建培训'"
+**If EXISTS** — skip install, proceed directly to config generation.
 
-For each test case:
+### Step 4B — Generate Playwright Config
 
-TC-xxx:
-  name: <descriptive>
-  fr_ref: <reference>
-  type: happy_path | sad_path | boundary | permission | state_transition | concurrency
-  account: admin | user | none
-  preconditions: <login state, required data>
-  steps:
-    1. Navigate to <base_url>/login
-    2. Fill input[placeholder or label matching "用户名"] with "<account.username>"
-    3. Fill input[type="password"] with "<account.password>"
-    4. Click button "登录"
-    5. Verify: URL contains "<dashboard_route_from_nav_map>"
-    6. Click: "<exact Chinese menu text from nav map>"
-    7. Click: "<exact Chinese submenu text from nav map>"
-    8. Verify: URL is "<route_from_nav_map>"
-    ... (continue with exact element texts from nav map)
-  expected_result: <precise DOM state or URL that must be true>
-  priority: P0 | P1 | P2
+Generate `.fullstack/playwright/playwright.config.ts`:
 
-Include all methodology cases:
-  BVA: use exact field labels and maxlength values from navigation map
-  State Transition: use exact button/status texts from navigation map
-  Permission: no-auth case (skip login steps), wrong-role case (use different account)
+> **Substitute actual values**: Replace `<FEATURE_ID>` with the real value of `$FEATURE_ID` and `<BASE_URL>` with the real base URL before calling codeagent.
 
-Write to .fullstack/tests/test-plan.md
-Summary table: | TC ID | Type | Priority | Account | Route | Description |
+```bash
+codeagent-wrapper --agent code-architect - .fullstack/playwright <<'EOF'
+Generate a playwright.config.ts file with the following settings.
+All paths are relative to .fullstack/playwright/ where npx runs.
+
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  testDir: '../../tests/<FEATURE_ID>/specs',
+  testMatch: '**/*.spec.ts',
+  timeout: 60000,
+  expect: { timeout: 10000 },
+  retries: 0,
+  workers: process.env.CI ? 2 : 4,
+  reporter: [
+    ['json', { outputFile: '../../tests/<FEATURE_ID>/pw-results.json' }],
+    ['html', { outputFolder: '../../tests/<FEATURE_ID>/pw-report', open: 'never' }],
+    ['line'],
+  ],
+  use: {
+    baseURL: '<BASE_URL>',
+    headless: true,
+    screenshot: 'only-on-failure',
+    video: 'off',
+  },
+  outputDir: '../../tests/<FEATURE_ID>/test-results',
+});
+
+Write this exactly to playwright.config.ts with the <FEATURE_ID> and <BASE_URL> placeholders already substituted.
 EOF
 ```
 
-### Execute test rounds (max 3 total across fix cycles)
+### Step 4C — Generate Playwright Spec Files
 
-Use Playwright MCP to execute each test case.
+```bash
+codeagent-wrapper --agent code-architect - . <<'EOF'
+Generate Playwright @playwright/test spec files from the test plan.
 
-For each test case:
-1. Follow steps exactly as written in the plan (concrete routes and element texts from nav map)
-2. Assert the expected result
-3. On failure: capture screenshot to `.fullstack/tests/screenshots/TC-<id>-round<N>-fail.png`
-4. Record: PASS or FAIL with specific reason
+INPUTS:
+- Test cases (primary): $TEST_DIR/test-cases.md
+- Navigation map (REQUIRED): .fullstack/testing/navigation-map.md
+- Base URL: <test_config.base_url>
+- Test accounts: <test_config.accounts as JSON>
 
-Write results to `.fullstack/tests/results-round-<N>.md`.
+CRITICAL rules for spec generation:
+  1. One .spec.ts file per MODULE (group test cases by their TC ID prefix, e.g. TC-USER-* → user.spec.ts)
+  2. Each test case becomes one `test(...)` block. test.describe groups by TC type.
+  3. Use EXACT element selectors derived from the navigation map:
+     - Prefer: page.getByRole('button', { name: '创建培训' })
+     - Prefer: page.getByLabel('名称')
+     - Prefer: page.getByText('编辑').first()
+     - Avoid: page.locator('.btn-primary') — fragile class selectors
+  4. Login helper: extract repeated login steps into a shared beforeEach or helper function.
+     Do NOT repeat login code in every test.
+  5. Timeout: each navigation step uses { timeout: 60000 } — handles slow backends.
+  6. After form submit: await expect(page).toHaveURL(/<expected_route>/, { timeout: 60000 })
+  7. Failure screenshots are automatic (playwright.config.ts screenshot: "only-on-failure").
+     Do not add manual screenshot calls in spec files.
+  8. Each test must be independent — no shared state between tests.
+     Use unique test data (e.g. append Date.now() to names) to avoid conflicts.
 
----
+MULTI-USER / DUAL-BROWSER pattern (use when test case involves two roles interacting simultaneously):
+  Trigger: test case describes Role A does X → Role B sees Y (e.g. messaging, notifications, shared state).
+  Pattern: use `{ browser }` fixture instead of `{ page }`. Create two browserContexts (= two incognito windows).
+  Each context has its own session/cookies — login independently.
+  Steps interleave between the two pages to simulate real-time interaction.
+  Real-time wait: use `await expect(pageB.getByText(...)).toBeVisible({ timeout: 15000 })` — allow up to 15s for WebSocket/SSE delivery.
+  Always close both contexts in the test body (not afterEach) to avoid cross-test leakage.
+  IMPORTANT — dual-browser tests MUST use serial mode to avoid parallel workers spawning 8+ browser contexts simultaneously:
+    Add `test.describe.configure({ mode: 'serial' })` at the top of any dual-browser describe block.
+  IMPORTANT — use unique room/channel IDs per test run to avoid workers interfering with each other's shared state:
+    Generate IDs with `Date.now()` or a UUID, then create the room/channel via API or UI before both roles join.
 
-## Fix Cycle (shared by API and Browser paths)
+EXAMPLE — dual-browser spec:
+```typescript
+import { test, expect } from '@playwright/test';
+import type { Page } from '@playwright/test';
 
-### Step A — Always: Generate Bug Reports
+async function loginAs(page: Page, username: string, password: string): Promise<void> {
+  await page.goto('/login');
+  await page.getByLabel('用户名').fill(username);
+  await page.getByLabel('密码').fill(password);
+  await page.getByRole('button', { name: '登录' }).click();
+  await expect(page).toHaveURL(/\/dashboard/, { timeout: 60000 });
+}
 
-For EVERY failing test, regardless of environment or TAPD availability,
-generate a bug report at `.fullstack/tests/bugs/BUG-<TC_ID>.md`:
+test.describe('TC-MSG-1: 师生实时消息互通', () => {
+  test.describe.configure({ mode: 'serial' }); // 防止并行worker冲突
+
+  test('教师发送消息后学员端实时收到', async ({ browser }) => {
+    // 两个独立上下文 = 两个无痕浏览器窗口
+    const teacherCtx = await browser.newContext();
+    const studentCtx = await browser.newContext();
+    const teacherPage = await teacherCtx.newPage();
+    const studentPage = await studentCtx.newPage();
+
+    // 分别登录两个角色
+    await loginAs(teacherPage, 'teacher01', 'pass123');
+    await loginAs(studentPage, 'student01', 'pass456');
+
+    // 使用唯一房间ID避免并行测试互相干扰
+    const roomId = `room-${Date.now()}`;
+    await teacherPage.goto(`/discussion/room/${roomId}`);
+    await studentPage.goto(`/discussion/room/${roomId}`);
+
+    // 教师端发消息
+    const msg = `测试消息_${Date.now()}`;
+    await teacherPage.getByPlaceholder('输入消息').fill(msg);
+    await teacherPage.getByRole('button', { name: '发送' }).click();
+
+    // 验证学员端实时收到（15s 内）
+    await expect(studentPage.getByText(msg)).toBeVisible({ timeout: 15000 });
+
+    await teacherCtx.close();
+    await studentCtx.close();
+  });
+});
+```
+
+OUTPUT:
+  Write each module's spec file to: $TEST_DIR/specs/<module>.spec.ts
+  Print a summary: <N> spec files generated, <M> total test cases
+  Note which tests use dual-browser pattern.
+EOF
+```
+
+### Step 4D — Execute Tests
+
+```bash
+# Reporters are defined in playwright.config.ts — do NOT pass --reporter on CLI (overrides config)
+cd .fullstack/playwright && npx playwright test 2>&1 | tee "../../tests/$FEATURE_ID/pw-run.log"
+```
+
+> Reporters defined in `playwright.config.ts` write JSON + HTML to `$TEST_DIR/`. The `line` reporter streams progress to terminal. Workers=`process.env.CI ? 2 : 4` runs tests in parallel — typical 20-test suite completes in ~2 minutes.
+
+Parse results (use `<<EOF` without quotes so shell expands `$FEATURE_ID`):
+```bash
+python3 - <<EOF
+import json, sys
+
+with open(".fullstack/tests/$FEATURE_ID/pw-results.json") as f:
+    data = json.load(f)
+
+passed = 0
+failed_ids = []
+for s in data.get("suites", []):
+    for t in s.get("specs", []):
+        tests = t.get("tests", [])
+        if not tests:
+            continue
+        results = tests[0].get("results", [])
+        if all(r["status"] == "expected" for r in results):
+            passed += 1
+        else:
+            failed_ids.append(t["title"])
+
+failed = data["stats"]["unexpected"]
+print(f"通过: {passed}  失败: {failed}")
+for tc in failed_ids:
+    print(f"  FAIL: {tc}")
+EOF
+```
+
+**If all pass** → skip to Fix Cycle / Completion.
+
+**If any fail** → proceed to **Failure Investigation** (Step 4E), then **Fix Cycle**.
+
+### Step 4E — Failure Investigation (MCP Browser)
+
+> This is the ONLY step where Playwright MCP browser is used. Do not use MCP for passing tests.
+
+For each failed test case, use Playwright MCP to reproduce and capture evidence:
+
+1. Open the failure screenshot from `$TEST_DIR/test-results/` (auto-captured by Playwright on failure)
+2. If screenshot is insufficient: use `mcp__playwright__browser_navigate` to replay the failing steps
+3. Capture additional screenshots or inspect DOM state via `mcp__playwright__browser_snapshot`
+4. Record the actual error: what element was missing, what URL was wrong, what text was unexpected
+
+Write a bug report for each failure at `$TEST_DIR/bugs/BUG-<TC_ID>.md`:
 
 ```markdown
 # BUG: <test case name>
@@ -692,23 +888,22 @@ Timestamp: <ISO timestamp>
 Test Account: role=<role> username=<username>
 
 ## 复现步骤
-<numbered steps from the test plan up to the point of failure>
+<numbered steps from the spec file up to the point of failure>
 
 ## 预期结果
-<expected_result from the test case>
+<expected assertion from the spec>
 
 ## 实际结果
-<what actually happened — error message shown, missing element, wrong data, unexpected redirect>
+<actual error — timeout, element not found, wrong URL, unexpected text>
 
 ## 截图
-<relative path: .fullstack/tests/screenshots/TC-<id>-round<N>-fail.png>
-(or "未截图" if API test)
+<relative path: $TEST_DIR/test-results/<spec-name>/<filename>.png>
 
 ## 影响需求
 <fr_ref from test case>
 
 ## 附加信息
-Browser: Chromium (Playwright) | HTTP Client (curl)
+Runner: @playwright/test (npx)  |  Browser: Chromium
 Navigation Map: <Generated timestamp from map header>
 ```
 
@@ -719,11 +914,13 @@ python "$HOME/.claude/skills/fse/scripts/workspace.py" add-issue \
 ```
 
 After writing individual reports, generate a consolidated summary at
-`.fullstack/tests/bugs/BUG-SUMMARY.md` listing all bugs with TC ID, priority, and one-line description.
+`$TEST_DIR/bugs/BUG-SUMMARY.md` listing all bugs with TC ID, priority, and one-line description.
 
 ---
 
-### Step B — Determine fix strategy by environment type
+## Fix Cycle (shared by API and Browser paths)
+
+### Determine fix strategy by environment type
 
 ```bash
 ENV_TYPE=$(python "$HOME/.claude/skills/fse/scripts/workspace.py" get-test-env | grep "^type:" | awk '{print $2}')
@@ -736,7 +933,7 @@ ENV_TYPE=$(python "$HOME/.claude/skills/fse/scripts/workspace.py" get-test-env |
 Delegate to develop agent:
 ```bash
 codeagent-wrapper --agent develop - <project_path> <<'EOF'
-Fix the test failures documented in .fullstack/tests/failures-round-<N>.md.
+Fix the test failures documented in $TEST_DIR/bugs/BUG-*.md (round <N>).
 
 For each failure:
   - Diagnose root cause from the description and screenshot
@@ -747,7 +944,7 @@ Context files:
   - Navigation map: .fullstack/testing/navigation-map.md
   - Requirements: .fullstack/requirements/confirmed.md (if exists)
   - Contract: .fullstack/contracts/openapi.yaml (if exists)
-  - Bug reports: .fullstack/tests/bugs/BUG-*.md
+  - Bug reports: $TEST_DIR/bugs/BUG-*.md
 EOF
 ```
 
@@ -781,12 +978,14 @@ Confidence ≥ 80. Classify: Critical | Important.
 EOF
 ```
 
-- **Critical** → `AskUserQuestion`: "立即修复 / 按现状继续"
-- **Important** → auto-fix via develop agent
+After both parallel review tasks complete, collect their combined output:
+- If either task reports **Critical** → `AskUserQuestion`: "立即修复 / 按现状继续"
+- If either task reports **Important** only → auto-fix via develop agent
+- If both tasks report nothing (confidence < 80) → proceed to retest
 
-#### Post-fix: Notify User to Restart Services Before Retest
+#### Post-fix: Notify User to Restart, Then Retest
 
-After fse-dev fix completes, use `AskUserQuestion`:
+After fix completes, use `AskUserQuestion`:
 
 ```
 fse-dev 已完成代码修复。
@@ -799,18 +998,32 @@ fse-dev 已完成代码修复。
   2. 停止测试
 ```
 
-After user confirms restart, re-scan:
+After user confirms restart, re-scan services:
 ```bash
 python "$HOME/.claude/skills/fse/scripts/workspace.py" check-services
 ```
 
-All UP → re-run only the previously failed tests. Repeat up to round 3 total.
+All UP → re-run only failed tests (substitute actual round number for `<N>`):
+
+**Browser path re-run:**
+```bash
+# Check if last-run tracking file exists
+test -f .fullstack/playwright/.last-run.json && LAST_RUN="--last-failed" || LAST_RUN=""
+cd .fullstack/playwright && npx playwright test $LAST_RUN 2>&1 | tee "../../tests/$FEATURE_ID/pw-run-round<N>.log"
+```
+
+> If `.last-run.json` is missing (e.g. working directory changed), Playwright runs all tests. In that case, pass the specific spec files containing failures instead:
+> `npx playwright test "../../tests/$FEATURE_ID/specs/<failing-module>.spec.ts"`
+
+**API path re-run:** re-execute only the failing TC IDs from the previous round.
+
+Repeat up to round 3 total.
 
 ---
 
 ### Strategy REMOTE (type=remote) — Bug Report + Optional TAPD
 
-Bug reports are already generated (Step A). Now handle submission.
+Bug reports are already generated (Step 4E). Now handle submission.
 
 **Check TAPD availability:**
 ```bash
@@ -821,7 +1034,7 @@ claude mcp list 2>/dev/null | grep -i tapd | head -1 || echo "TAPD_UNAVAILABLE"
 - Continue without submission.
 - Output at end of test run:
   ```
-  Bug 报告已生成（<N> 条）：.fullstack/tests/bugs/
+  Bug 报告已生成（<N> 条）：$TEST_DIR/bugs/
   TAPD MCP 未配置，请手动提交上述 Bug 报告。
   ```
 
@@ -851,7 +1064,7 @@ Output after remote testing:
 远程环境测试完成 [<env_name>]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 通过: <N>  |  失败: <N>
-Bug 报告: .fullstack/tests/bugs/BUG-SUMMARY.md
+Bug 报告: $TEST_DIR/bugs/BUG-SUMMARY.md
 TAPD 提交: <N> 条新建 / <N> 条追加评论 (或: 未提交)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
@@ -881,11 +1094,11 @@ After round 3 with remaining failures, escalate via `AskUserQuestion`:
 Use `AskUserQuestion`:
 ```
 是否执行快速冒烟测试？
-  1. 是 — 浏览器截图验证主页面可访问
+  1. 是 — Playwright 脚本验证主页面可访问并截图
   2. 否 — 跳过测试，直接标记完成
 ```
 
-If yes: navigate to `<base_url>` with Playwright, take a screenshot, verify page title loads.
+If yes: generate a minimal `smoke.spec.ts` that navigates to `<base_url>`, verifies title loads, and captures a screenshot. Run via `npx playwright test smoke.spec.ts`.
 No fix cycle, no rounds.
 
 ---
@@ -897,7 +1110,7 @@ If in FSE pipeline:
 python "$HOME/.claude/skills/fse/scripts/workspace.py" set-state REPORTING
 ```
 
-Write `.fullstack/tests/final-report.md`:
+Write `$TEST_DIR/final-report.md`:
 
 ```markdown
 # 测试报告
@@ -916,8 +1129,12 @@ Write `.fullstack/tests/final-report.md`:
 | 覆盖 FR 数量 | N / M |
 
 ## Bug 报告
-位置: .fullstack/tests/bugs/BUG-SUMMARY.md
+位置: $TEST_DIR/bugs/BUG-SUMMARY.md
 TAPD 提交: <N> 条 (或: 未提交)
+
+## Playwright 报告
+HTML 报告: $TEST_DIR/pw-report/index.html
+JSON 结果: $TEST_DIR/pw-results.json
 
 ## 导航地图
 生成时间: <from map header>  |  前端 Git Commit: <from map header>
@@ -935,6 +1152,7 @@ Output:
 ```
 测试完成  [<env_name> · <mode>]
 通过: <N> / <total>  |  Bug: <N> 条
-Bug 报告: .fullstack/tests/bugs/BUG-SUMMARY.md
+Bug 报告: $TEST_DIR/bugs/BUG-SUMMARY.md
+Playwright 报告: $TEST_DIR/pw-report/index.html
 <promise>FSE_PHASE_COMPLETE</promise>
 ```

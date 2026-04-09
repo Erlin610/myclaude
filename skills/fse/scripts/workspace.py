@@ -246,6 +246,18 @@ def cmd_status(args):
     be = [pr["name"] for pr in data["projects"].get("backend", [])]
     print(f"frontend: {', '.join(fe) or 'none'}")
     print(f"backend: {', '.join(be) or 'none'}")
+    feature_id = data.get("current_feature", {}).get("id", "")
+    if feature_id:
+        print(f"feature_id: {feature_id}")
+
+
+def cmd_get_feature_id(args):
+    data = load_workspace()
+    fid = data.get("current_feature", {}).get("id", "")
+    if fid:
+        print(fid)
+    else:
+        print("NOT_SET")
 
 
 def cmd_get_state(args):
@@ -302,8 +314,8 @@ def _auto_save_session(data: dict):
     }
     sf.write_text(json.dumps(session_data, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    # Sync artifacts (requirements, contracts, analysis) — skip if dir not yet created
-    for artifact in ("requirements", "contracts", "analysis"):
+    # Sync artifacts (requirements, contracts, analysis, tests) — skip if dir not yet created
+    for artifact in ("requirements", "contracts", "analysis", "tests"):
         src = Path(WORKSPACE_DIR) / artifact
         if src.exists():
             dst = session_dir / artifact
@@ -1021,7 +1033,7 @@ def cmd_session_save(args):
     )
 
     # Copy all key artifacts from .fullstack/
-    for artifact_dir in ("requirements", "contracts", "analysis"):
+    for artifact_dir in ("requirements", "contracts", "analysis", "tests"):
         src = Path(WORKSPACE_DIR) / artifact_dir
         if src.exists():
             dst = session_dir / artifact_dir
@@ -1085,8 +1097,8 @@ def cmd_session_restore(args):
 
     save_workspace(snapshot)
 
-    # Restore all artifacts (requirements, contracts, analysis)
-    for artifact_dir in ("requirements", "contracts", "analysis"):
+    # Restore all artifacts (requirements, contracts, analysis, tests)
+    for artifact_dir in ("requirements", "contracts", "analysis", "tests"):
         src = session_dir / artifact_dir
         if src.exists():
             dst = Path(WORKSPACE_DIR) / artifact_dir
@@ -1284,6 +1296,7 @@ def main():
 
     sub.add_parser("status")
     sub.add_parser("get-state")
+    sub.add_parser("get-feature-id")
     sub.add_parser("progress")
     sub.add_parser("session-start")
     sub.add_parser("session-end")
@@ -1430,6 +1443,7 @@ def main():
         "init": cmd_init,
         "status": cmd_status,
         "get-state": cmd_get_state,
+        "get-feature-id": cmd_get_feature_id,
         "set-state": cmd_set_state,
         "add-project": cmd_add_project,
         "get-mode": cmd_get_mode,
