@@ -16,7 +16,7 @@ Produces a complete OpenAPI contract from the analysis API surface. Both fronten
 1. **Contract must be defined before development starts.** Frontend and backend both reference this.
 2. Every endpoint identified in `fse-analysis` must appear in the contract — no gaps.
 3. **User must confirm** before state advances.
-4. Contract is written to `.fullstack/contracts/openapi.yaml`.
+4. Contract is written to `.fullstack/contracts/<FEATURE_ID>/openapi.yaml`.
 5. **All user-facing questions and confirmations MUST use `AskUserQuestion` tool.** Never show text prompts expecting free-form reply.
 
 ## Step 1 — Mark state
@@ -25,11 +25,19 @@ Produces a complete OpenAPI contract from the analysis API surface. Both fronten
 python "$HOME/.claude/skills/fse/scripts/workspace.py" set-state CONTRACT_DEFINING
 ```
 
+```bash
+FEATURE_ID=$(python "$HOME/.claude/skills/fse/scripts/workspace.py" get-feature-id 2>/dev/null)
+REQ_DIR=".fullstack/requirements/$FEATURE_ID"
+ANALYSIS_DIR=".fullstack/analysis/$FEATURE_ID"
+CONTRACTS_DIR=".fullstack/contracts/$FEATURE_ID"
+mkdir -p "$CONTRACTS_DIR"
+```
+
 ## Step 2 — Load inputs
 
 Read:
-- `.fullstack/analysis/api-surface.md` — endpoint outline from analysis
-- `.fullstack/requirements/confirmed.md` — for data shape and business rules
+- `$ANALYSIS_DIR/api-surface.md` — endpoint outline from analysis
+- `$REQ_DIR/confirmed.md` — for data shape and business rules
 - Backend project structure — to align with existing patterns (auth headers, error format, pagination)
 
 Run a quick backend convention scan:
@@ -55,8 +63,8 @@ codeagent-wrapper --agent code-architect - . <<'EOF'
 Generate a complete OpenAPI 3.0 YAML specification for this feature.
 
 Inputs:
-- API surface: .fullstack/analysis/api-surface.md
-- Requirements: .fullstack/requirements/confirmed.md
+- API surface: $ANALYSIS_DIR/api-surface.md
+- Requirements: $REQ_DIR/confirmed.md
 - Backend conventions: <output from Step 2>
 
 Requirements for the spec:
@@ -74,20 +82,20 @@ Requirements for the spec:
      and add `x-idempotent: false`.
    This field is mandatory on every mutation endpoint — no silent omissions.
 
-Write the complete YAML to .fullstack/contracts/openapi.yaml
+Write the complete YAML to $CONTRACTS_DIR/openapi.yaml
 EOF
 ```
 
 ## Step 4 — Produce human-readable contract summary
 
-Write `.fullstack/contracts/contract-summary.md`:
+Write `$CONTRACTS_DIR/contract-summary.md` (i.e. .fullstack/contracts/<FEATURE_ID>/...):
 
 ```markdown
 # API Contract Summary
 
 Version: 1.0.0
 Generated: <timestamp>
-Spec: .fullstack/contracts/openapi.yaml
+Spec: $CONTRACTS_DIR/openapi.yaml
 
 ## Endpoints
 
@@ -125,7 +133,7 @@ Spec: .fullstack/contracts/openapi.yaml
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 GATE-3：API 合约确认
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-合约：.fullstack/contracts/openapi.yaml
+合约：$CONTRACTS_DIR/openapi.yaml (i.e. .fullstack/contracts/<FEATURE_ID>/openapi.yaml)
 定义的接口：<N>
 共享 Schema：<N>
 

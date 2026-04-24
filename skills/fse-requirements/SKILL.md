@@ -37,6 +37,12 @@ producing the specification.
 
 ```bash
 python "$HOME/.claude/skills/fse/scripts/workspace.py" set-state REQUIREMENTS_DRAFTING
+FEATURE_ID=$(python "$HOME/.claude/skills/fse/scripts/workspace.py" get-feature-id 2>/dev/null)
+if [ -z "$FEATURE_ID" ] || [ "$FEATURE_ID" = "NOT_SET" ]; then
+  FEATURE_ID="standalone-$(date +%Y%m%d-%H%M%S)"
+fi
+REQ_DIR=".fullstack/requirements/$FEATURE_ID"
+mkdir -p "$REQ_DIR"
 ```
 
 ### Step 2 — Collect inputs
@@ -98,7 +104,7 @@ call `lanhu_get_design_slices(url, design_name)` to get per-element metadata:
 #### Phase 4 — Generate design specification document
 
 Using ALL collected data (HTML+CSS from analyze result when DDS succeeded + slice metadata +
-design images for visual reference), write `.fullstack/requirements/design-spec.md`:
+design images for visual reference), write `$REQ_DIR/design-spec.md` (i.e. `.fullstack/requirements/<FEATURE_ID>/design-spec.md`):
 
 ```markdown
 # Design Specification
@@ -232,11 +238,65 @@ Write these as falsifiable statements, not vague prose.
 
 #### PHASE C — Rebuild Specification from Truths
 
-Starting ONLY from the verified bedrock truths in Phase B, derive what the system must do.
+**IMPORTANT — Scan backend conventions FIRST (backend/full mode only).**
+
+Before generating any API paths, you MUST extract the actual URL naming conventions from the
+existing backend codebase. Never invent API paths from domain knowledge alone.
+
+If the current mode includes backend scope AND a backend project is registered in `workspace.json`,
+run the following scan:
+
+```bash
+codeagent-wrapper --agent code-explorer - <backend_project_path> <<'EOF'
+Scan the existing backend codebase to extract URL naming conventions.
+
+1. Find all @RestController and @Controller classes. For each, record:
+   - File path
+   - Class-level @RequestMapping value (the base path)
+   - Method-level @GetMapping / @PostMapping / @PutMapping / @DeleteMapping / @PatchMapping values
+
+2. From those, extract:
+   URL_PREFIX: What prefix(es) are used? (e.g. /api, /api/v1, /v2)
+   NAMING_STYLE: Are path segments kebab-case, camelCase, snake_case, or PascalCase?
+     (e.g. /userList vs /user-list vs /user_list)
+   ROLE_SEGMENTATION: Are teacher/student/admin routes separated by path prefix?
+     (e.g. /teacher/xxx vs /student/xxx vs /api/xxx with role checked in code)
+   VERSION_PATTERN: Is there an API version in the path? (e.g. /api/v1/, /v2/)
+   RESOURCE_NAMING: Are resources plural or singular? (e.g. /users vs /user)
+   ID_PATTERN: How are IDs expressed in paths? (e.g. /{id}, /{userId}, /{taskId})
+
+3. Show 5–10 concrete existing endpoint examples:
+   METHOD  /actual/path/as/in/code
+
+Output format:
+URL_CONVENTIONS:
+  prefix: <e.g. /api>
+  naming_style: <kebab-case|camelCase|snake_case>
+  role_segmentation: <path-prefix|annotation-based|none>
+  version_pattern: <e.g. none|/v1|/api/v1>
+  resource_naming: <plural|singular>
+  id_pattern: <e.g. /{taskId}>
+
+EXISTING_EXAMPLES:
+  GET    /api/courses/{courseId}/students
+  POST   /api/assignments
+  ...
+EOF
+```
+
+**Use the extracted `URL_CONVENTIONS` as hard constraints for all API paths generated below.**
+If the backend project path is not available (mode=frontend or no backend registered), skip this
+scan and note "Backend conventions: not applicable" in the output.
+
+---
+
+Now, starting ONLY from the verified bedrock truths in Phase B AND the URL conventions above,
+derive what the system must do.
 
 ```
 For each bedrock truth T:
   → What API operations are needed to satisfy T?
+    → Apply URL_CONVENTIONS exactly: prefix, naming style, role segmentation, ID pattern
   → What UI state or interaction is the minimum to expose T to the user?
   → Is the stated requirement consistent with T, or does it add unnecessary complexity?
 ```
@@ -245,6 +305,7 @@ For each bedrock truth T:
 - Does the Lanhu spec require MORE than what the truths demand? → Flag as potential over-engineering
 - Does it require LESS than the truths demand? → Flag as a gap (missing requirement)
 - Forbidden conclusion: "assume they meant X" — surface every mismatch explicitly
+- **Forbidden**: inventing URL paths that don't follow the extracted `URL_CONVENTIONS`
 
 ---
 
@@ -297,7 +358,7 @@ OPEN QUESTION items with HIGH impact must be resolved at GATE-1 before proceedin
 
 ### Step 5 — Write requirements document
 
-Write `.fullstack/requirements/raw.md`:
+Write `$REQ_DIR/raw.md` (i.e. `.fullstack/requirements/<FEATURE_ID>/raw.md`):
 
 ```markdown
 # Feature Requirements: <feature_name>
@@ -318,6 +379,20 @@ Generated: <timestamp>  |  Workspace: <workspace_id>  |  Mode: <mode>
 **State machine**: <entity → states → transitions>
 **Permissions**: <who can do what>
 **Business invariants**: <always-true rules>
+
+### Backend URL Conventions (Phase C scan output)
+**URL prefix**: <e.g. /api>
+**Naming style**: <kebab-case|camelCase|snake_case>
+**Role segmentation**: <path-prefix|annotation-based|none>
+**Version pattern**: <none|/v1|/api/v1>
+**Resource naming**: <plural|singular>
+**ID pattern**: <e.g. /{taskId}>
+
+Existing examples:
+```
+GET    /actual/path/from/codebase
+POST   /actual/path/from/codebase
+```
 
 ### Source Conflicts (Phase D output)
 | ID | Source A | Source B | Impact | Resolution |
@@ -363,14 +438,28 @@ Generated: <timestamp>  |  Workspace: <workspace_id>  |  Mode: <mode>
 
 ### Step 5.5 — Generate BDD Test Cases
 
-Generate `.fullstack/tests/test-cases.md` — the pre-built test baseline consumed by `fse-test`.
+Derive session-scoped output path first:
+
+```bash
+FEATURE_ID=$(python "$HOME/.claude/skills/fse/scripts/workspace.py" get-feature-id 2>/dev/null)
+if [ -z "$FEATURE_ID" ] || [ "$FEATURE_ID" = "NOT_SET" ]; then
+  FEATURE_ID="standalone-$(date +%Y%m%d-%H%M%S)"
+fi
+TC_DIR=".fullstack/tests/$FEATURE_ID"
+mkdir -p "$TC_DIR"
+echo "Test cases will be written to: $TC_DIR/test-cases.md"
+```
+
+Generate `$TC_DIR/test-cases.md` — the pre-built test baseline consumed by `fse-test`.
 This step runs after `raw.md` is written so test cases reflect all Phase A–E findings.
+
+> **Before calling codeagent**: substitute the actual resolved value of `$TC_DIR` (e.g. `.fullstack/tests/feat-abc123`) into the prompt — never pass the shell variable name literally.
 
 ```bash
 codeagent-wrapper --agent code-architect - . <<'EOF'
 Generate a structured BDD test case file from the requirements analysis.
 
-Input: .fullstack/requirements/raw.md
+Input: $REQ_DIR/raw.md
        (Pay attention to: Bedrock Truths, State machines, Permission truths, Boundary Inventory findings)
 
 For every FR, produce a MINIMUM of three test cases:
@@ -425,7 +514,7 @@ TC-CONC-001 (Concurrency — add if simultaneous writes are possible):
   scenario: two users submit the same form simultaneously
   expected: exactly one succeeds, other receives clear error (not silent data corruption)
 
-Write the complete output to .fullstack/tests/test-cases.md.
+Write the complete output to $TC_DIR/test-cases.md (substitute actual path, e.g. .fullstack/tests/feat-abc123/test-cases.md).
 Include a summary table at the top:
 
 | TC ID | FR Ref | Type | Priority | Description |
@@ -454,10 +543,30 @@ Use `AskUserQuestion` to ask:
 ```
 
 **If "确认"** (and all BLOCKING conflicts resolved):
+
+Before running the bash block, derive two values from the confirmed requirements:
+1. `FEATURE_NAME` — the full feature title as written in the requirements doc (may be Chinese)
+2. `FEATURE_SLUG` — a concise English kebab-case slug (max 4 words) that will become the
+   **folder name** for this session. Derive it from the feature's domain semantics, NOT
+   by transliterating Chinese characters.
+   Examples:
+   - `课赛作品（通用作品提交模块）` → `works-submission`
+   - `用户登录与认证` → `user-auth`
+   - `订单支付流程` → `order-payment`
+   - `商品库存管理` → `inventory-management`
+
 ```bash
-cp .fullstack/requirements/raw.md .fullstack/requirements/confirmed.md
+cp $REQ_DIR/raw.md $REQ_DIR/confirmed.md
+FEATURE_NAME=$(head -1 $REQ_DIR/confirmed.md | sed 's/^# Feature Requirements: //')
+FEATURE_SLUG="<derived-english-slug>"   # substitute actual value before running
+python "$HOME/.claude/skills/fse/scripts/workspace.py" \
+  set-feature-name "$FEATURE_NAME" --slug "$FEATURE_SLUG"
 python "$HOME/.claude/skills/fse/scripts/workspace.py" set-state REQUIREMENTS_CONFIRMED
 ```
+
+Result: session folder becomes `feat-<slug>` (e.g. `feat-works-submission`),
+session picker label shows the full Chinese name.
+
 Output: `<promise>FSE_PHASE_COMPLETE</promise>` — 需求已确认
 
 **If "修改"**: apply feedback, re-run relevant analysis phases, re-present.
@@ -486,5 +595,14 @@ Ask inline using `AskUserQuestion`:
 ```
 
 Apply Phase A (WHY/WHO/WHEN/WHAT) inline — just ask: "Why is this change needed? Who triggers it?"
-Write a 5-10 line summary to `.fullstack/requirements/confirmed.md` (no full doc).
+Write a 5-10 line summary to `$REQ_DIR/confirmed.md` (no full doc).
+
+Then name the session. Derive a concise English slug (max 4 words, kebab-case) from the
+change description, then run:
+```bash
+FEATURE_NAME="<first line of user description, ≤60 chars>"  # substitute actual value
+FEATURE_SLUG="<derived-english-slug>"                        # substitute actual value
+python "$HOME/.claude/skills/fse/scripts/workspace.py" \
+  set-feature-name "$FEATURE_NAME" --slug "$FEATURE_SLUG"
+```
 Advance state directly to `REQUIREMENTS_CONFIRMED`. No user gate.

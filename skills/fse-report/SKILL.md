@@ -22,6 +22,17 @@ running git diff on each project. Called automatically after `fse-test` complete
 
 ## Step 1 — Collect changed files per project
 
+Derive all session-scoped artifact paths before any reads:
+
+```bash
+FEATURE_ID=$(python "$HOME/.claude/skills/fse/scripts/workspace.py" get-feature-id 2>/dev/null)
+REQ_DIR=".fullstack/requirements/$FEATURE_ID"
+ANALYSIS_DIR=".fullstack/analysis/$FEATURE_ID"
+CONTRACTS_DIR=".fullstack/contracts/$FEATURE_ID"
+TASKS_DIR=".fullstack/tasks/$FEATURE_ID"
+TEST_REPORT=".fullstack/tests/$FEATURE_ID/final-report.md"
+```
+
 For each registered project (all types, all in scope):
 
 ```bash
@@ -60,7 +71,7 @@ EOF
 
 ## Step 2 — Collect configuration requirements
 
-Read `.fullstack/tasks/manual-checklist.md`.
+Read `$TASKS_DIR/manual-checklist.md`.
 
 Extract:
 - All **ENV VAR** items → configuration additions
@@ -95,7 +106,7 @@ EOF
 
 ## Step 3 — Collect SQL scripts
 
-Read `.fullstack/tasks/manual-checklist.md` for all MIGRATION items.
+Read `$TASKS_DIR/manual-checklist.md` for all MIGRATION items.
 
 Also scan backend projects for any migration files added:
 
@@ -164,7 +175,8 @@ Determine the deployment procedure for this backend service.
 EOF
 ```
 
-Also read `.fullstack/tests/final-report.md` for Section 8 (Testing Evidence).
+Also read `$TEST_REPORT` for Section 8 (Testing Evidence).
+If the file does not exist, check `.fullstack/tests/*/final-report.md` and use the most recent one.
 
 ## Step 5 — Write DELIVERY-REPORT.md
 
@@ -350,8 +362,8 @@ rsync -avz dist/ user@server:/var/www/<app_name>/
 | POST | /api/users | Bearer | Create a new user |
 | GET | /api/users/{id} | Bearer | Get user detail |
 
-Full spec: `.fullstack/contracts/openapi.yaml`
-Integration guide: `.fullstack/contracts/api-integration-guide.md`
+Full spec: `$CONTRACTS_DIR/openapi.yaml`
+Integration guide: `$CONTRACTS_DIR/api-integration-guide.md`
 
 ---
 
@@ -369,7 +381,7 @@ Integration guide: `.fullstack/contracts/api-integration-guide.md`
 | TC-002 | Empty state shown | PASS | browser |
 | TC-BE-001 | GET /api/users returns 200 | PASS | api |
 
-Full test report: `.fullstack/tests/final-report.md`
+Full test report: `$TEST_REPORT`
 ```
 
 ## Step 6 — Advance state to COMPLETED

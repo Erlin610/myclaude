@@ -23,6 +23,46 @@ Two execution contexts:
 6. **All user-facing questions MUST use `AskUserQuestion` tool.**
 7. **NEVER tell the user to manually start services in remote env.** For local env, SHOW the start commands and ask the user to start manually — do NOT auto-start. Printing the start command IS the help. If services are still DOWN after user confirms restart, repeat the check once more.
 8. **NEVER ask the user which port a service runs on.** All ports are registered in workspace.json. Use `list-projects` to read them. If a port is missing from workspace.json, ask once and save it — do not ask on every run.
+9. **未验证 = 失败。这是不可逾越的红线。**
+   只有两种合法的测试结果：`✅ 通过`（已执行 + 断言全部通过）和 `❌ 失败`（其他一切情况）。
+   不存在第三种状态。具体说：
+   - 前置条件未满足 → ❌ 失败（原因：前置条件未满足）
+   - 组件/元素找不到 → ❌ 失败（原因：UI 元素无法定位）
+   - 功能未实现 → ❌ 失败（原因：功能缺失）
+   - 手动跳过 → ❌ 失败（原因：需人工操作，自动化覆盖缺失）
+   `test.skip()` 和静默 `return` 同样禁止——跳过 = 未验证 = 失败。
+   执行清单只有两列终态：`✅ 通过` 和 `❌ 失败（原因）`。
+
+10. **测试必须自建前置条件，不得依赖人工操作。**
+    如果一个测试用例需要"活跃课堂"、"学员已提交互动"、"存在某条数据"等前置条件，
+    测试本身必须通过 API 调用创建该条件，然后在测试结束后清理（teardown）。
+    不允许出现"需要先手动开课才能测"的情况——那是测试设计缺陷，不是环境问题。
+    如果 API 无法创建某前置条件（无对应接口）→ 明确标记为 ❌ 失败（原因：前置条件无法自动创建，缺少 API）。
+    通过 `AskUserQuestion` 告知用户并记录到 Bug 报告。
+
+11. **组件找不到 → 先向用户确认，绝不自动标记通过。**
+    在选择器解析阶段，若某个 UI 元素（弹幕、弹窗、动画等）在当前分支源码中找不到：
+    - 不得生成假选择器
+    - 不得静默跳过该用例
+    - 必须用 `AskUserQuestion` 向用户确认：
+      ```
+      ⚠️ 无法在源码中找到以下 UI 组件，无法生成有效断言：
+        - [组件名] — 搜索范围：src/**/*.vue
+      可能原因：功能在其他分支 / 尚未实现 / 命名不同
+      请选择：
+        1. 功能在其他分支 — 告知分支名，切换后重新搜索
+        2. 功能尚未实现 — 标记为 ❌ 失败（功能缺失）
+        3. 提供正确文件路径 — 手动指定组件位置
+      ```
+    - 无论用户选哪项，该测试用例都不得标记为通过，直到断言可以真实执行。
+
+12. **四种产生假通过的代码模式，永久禁止出现在生成的 spec 文件中：**
+    - `if (await element.isVisible()) { /* 断言 */ }` — 前置失败时跳过所有断言 → 假通过
+    - `return`（没有先调用 `test.fail()`）— Playwright 将早返回计为 PASS
+    - `.catch(() => {})` 附加在任何 `expect()` 上 — 吞掉断言失败
+    - `[class*="猜测"]` 属性选择器未经源码验证 — 可能匹配到错误元素
+
+13. **选择器必须来自源码，不得猜测。** 在生成 spec 前，动态元素（动画、弹幕、Toast、弹窗）的 CSS class 必须从前端源码中读取。禁止 `[class*="xxx"]` 猜测模式。
 
 ---
 
@@ -31,12 +71,12 @@ Two execution contexts:
 ### 0A — Detect execution context
 
 ```bash
-python "$HOME/.claude/skills/fse/scripts/workspace.py" status 2>/dev/null
+python "$HOME/.claude/skills/fse-test/scripts/workspace.py" status 2>/dev/null
 ```
 
 **FOUND** → **Pipeline mode**: workspace and project paths are already configured.
   - Skip to Step 0C (credentials check).
-  - Read mode from workspace: `python "$HOME/.claude/skills/fse/scripts/workspace.py" get-mode`
+  - Read mode from workspace: `python "$HOME/.claude/skills/fse-test/scripts/workspace.py" get-mode`
 
 **NOT_FOUND** → **Standalone mode**: continue with Step 0B.
 
@@ -45,11 +85,13 @@ python "$HOME/.claude/skills/fse/scripts/workspace.py" status 2>/dev/null
 ```bash
 # Anchor to project root — TEST_DIR is relative to cwd
 echo "Working directory: $(pwd)"
-FEATURE_ID=$(python "$HOME/.claude/skills/fse/scripts/workspace.py" get-feature-id 2>/dev/null)
+FEATURE_ID=$(python "$HOME/.claude/skills/fse-test/scripts/workspace.py" get-feature-id 2>/dev/null)
 if [ -z "$FEATURE_ID" ] || [ "$FEATURE_ID" = "NOT_SET" ]; then
   FEATURE_ID="standalone-$(date +%Y%m%d-%H%M%S)"
 fi
 TEST_DIR=".fullstack/tests/$FEATURE_ID"
+REQ_DIR=".fullstack/requirements/$FEATURE_ID"
+CONTRACTS_DIR=".fullstack/contracts/$FEATURE_ID"
 mkdir -p "$TEST_DIR/bugs" "$TEST_DIR/specs" "$TEST_DIR/test-results"
 echo "TEST_DIR: $TEST_DIR"
 echo "FEATURE_ID: $FEATURE_ID"
@@ -79,13 +121,13 @@ FSE-Test 独立模式 — 项目路径
 
 Initialize minimal workspace:
 ```bash
-python "$HOME/.claude/skills/fse/scripts/workspace.py" init "$(pwd)"
+python "$HOME/.claude/skills/fse-test/scripts/workspace.py" init "$(pwd)"
 ```
 
 Register provided paths (detect tech stack inline via quick file check):
 ```bash
 # For each provided project path:
-python "$HOME/.claude/skills/fse/scripts/workspace.py" add-project \
+python "$HOME/.claude/skills/fse-test/scripts/workspace.py" add-project \
   --type <frontend|backend> --name <dirname> --path "<path>" --tech <detected>
 ```
 
@@ -100,7 +142,7 @@ Use `AskUserQuestion`:
 ```
 
 ```bash
-python "$HOME/.claude/skills/fse/scripts/workspace.py" set-mode <backend|frontend|full>
+python "$HOME/.claude/skills/fse-test/scripts/workspace.py" set-mode <backend|frontend|full>
 ```
 
 #### Choose test case source
@@ -129,32 +171,32 @@ Store choice; used in Step 2.
 #### Check configured environments
 
 ```bash
-python "$HOME/.claude/skills/fse/scripts/workspace.py" list-test-envs
+python "$HOME/.claude/skills/fse-test/scripts/workspace.py" list-test-envs
 ```
 
 **Pipeline mode**: automatically use `local` environment — set it active, then verify `base_url` is populated. Never ask the user what port to use.
 
 ```bash
 # Ensure local env exists with a base_url derived from the frontend project port
-python "$HOME/.claude/skills/fse/scripts/workspace.py" list-projects --type frontend
+python "$HOME/.claude/skills/fse-test/scripts/workspace.py" list-projects --type frontend
 ```
 
 Parse the first frontend project's `port` field (e.g. `9527`). Then:
 
 ```bash
-python "$HOME/.claude/skills/fse/scripts/workspace.py" get-test-env --name local 2>/dev/null
+python "$HOME/.claude/skills/fse-test/scripts/workspace.py" get-test-env --name local 2>/dev/null
 ```
 
 - If `base_url` is already non-empty → use it as-is.
 - If `base_url` is empty or env does not exist → auto-set from the frontend project port:
 
 ```bash
-python "$HOME/.claude/skills/fse/scripts/workspace.py" set-test-env \
+python "$HOME/.claude/skills/fse-test/scripts/workspace.py" set-test-env \
   --name local --base-url "http://localhost:<frontend_port>" --type local
 ```
 
 ```bash
-python "$HOME/.claude/skills/fse/scripts/workspace.py" set-active-test-env --name local
+python "$HOME/.claude/skills/fse-test/scripts/workspace.py" set-active-test-env --name local
 ```
 
 > **Rule**: Do NOT ask the user "which port?". The port is already registered in workspace.json from fse-init. If no frontend project is registered, ask once for the base URL via `AskUserQuestion` then save it.
@@ -181,15 +223,15 @@ TAPD 项目 ID（远程环境填写，留空跳过）: ___
 ```
 
 ```bash
-python "$HOME/.claude/skills/fse/scripts/workspace.py" set-test-env \
+python "$HOME/.claude/skills/fse-test/scripts/workspace.py" set-test-env \
   --name "<name>" --base-url "<url>" --type <local|remote> [--tapd-project-id "<id>"]
-python "$HOME/.claude/skills/fse/scripts/workspace.py" set-active-test-env --name "<name>"
+python "$HOME/.claude/skills/fse-test/scripts/workspace.py" set-active-test-env --name "<name>"
 ```
 
 #### Configure accounts for active environment
 
 ```bash
-python "$HOME/.claude/skills/fse/scripts/workspace.py" get-test-env
+python "$HOME/.claude/skills/fse-test/scripts/workspace.py" get-test-env
 ```
 
 If no accounts configured, collect via `AskUserQuestion` (multiple roles supported):
@@ -205,7 +247,7 @@ If no accounts configured, collect via `AskUserQuestion` (multiple roles support
 
 For each role provided:
 ```bash
-python "$HOME/.claude/skills/fse/scripts/workspace.py" add-test-account \
+python "$HOME/.claude/skills/fse-test/scripts/workspace.py" add-test-account \
   --role "<role>" --username "<username>" --password "<password>"
 ```
 
@@ -214,8 +256,8 @@ python "$HOME/.claude/skills/fse/scripts/workspace.py" add-test-account \
 ### 0D — Service Check (both modes)
 
 ```bash
-python "$HOME/.claude/skills/fse/scripts/workspace.py" check-services
-ENV_TYPE=$(python "$HOME/.claude/skills/fse/scripts/workspace.py" get-test-env | grep "^type:" | awk '{print $2}')
+python "$HOME/.claude/skills/fse-test/scripts/workspace.py" check-services
+ENV_TYPE=$(python "$HOME/.claude/skills/fse-test/scripts/workspace.py" get-test-env | grep "^type:" | awk '{print $2}')
 ```
 
 **If all services are UP** → proceed to Step 1.
@@ -242,7 +284,7 @@ Use `AskUserQuestion`:
 
 After user selects option 1, re-scan:
 ```bash
-python "$HOME/.claude/skills/fse/scripts/workspace.py" check-services
+python "$HOME/.claude/skills/fse-test/scripts/workspace.py" check-services
 ```
 
 - All UP → proceed to Step 1.
@@ -265,14 +307,15 @@ python "$HOME/.claude/skills/fse/scripts/workspace.py" check-services
 
 ### Why this step exists
 
-A Navigation Map is a structured document that tells the test agent:
-- **WHERE** each feature lives: menu path, exact route URL
-- **WHAT** is on each page: buttons (exact text), form fields (label + constraints)
-- **HOW** to navigate there: step-by-step from login
+A Navigation Map answers three questions for every feature:
+- **WHERE**: exact route URL + which menu path leads there
+- **HOW MANY WAYS**: all navigation paths that reach this feature (direct, via breadcrumb, via action button)
+- **SHORTEST PATH**: minimum steps from login → feature, used as the canonical test path
 
 Without it, Playwright spec files must hardcode guesses about selectors and routes —
-getting it wrong means brittle tests. With it, spec generation has all exact element texts,
-routes, and flow sequences before writing a single line of code.
+getting it wrong means brittle tests. A flat route table is not enough: a test agent that
+knows `/student/courses` exists but doesn't know "click 我的课程 in the top nav" is still
+navigating blindly. The map must capture the *reachability graph*, not just the route list.
 
 ### 1A — Check existence and freshness
 
@@ -289,10 +332,16 @@ git -C <frontend_path> log --since="$MAP_DATE" --oneline \
   -- src/router/ src/components/Sidebar* src/components/Nav* src/layout/ 2>/dev/null | head -3
 ```
 
-- No output → map is **FRESH** → skip to Step 2.
+- No output → map is **FRESH**. Output the following banner and read the map into context before proceeding:
+  ```
+  ✅ 导航地图已验证（最后生成：<MAP_DATE>，前端路由/导航无变更）
+  路径：.fullstack/testing/navigation-map.md — 已加载到上下文
+  ```
+  Read `.fullstack/testing/navigation-map.md` fully into context now. Then skip to Step 2.
+
 - Has output → map is **STALE** → print:
   ```
-  导航地图检测到前端路由/导航变更（自 <MAP_DATE>），正在更新导航地图…
+  ⚠️ 导航地图过期（自 <MAP_DATE> 后前端路由/导航有变更），正在更新导航地图…
   ```
   Then proceed to Step 1B.
 
@@ -300,99 +349,151 @@ git -C <frontend_path> log --since="$MAP_DATE" --oneline \
 
 ```bash
 codeagent-wrapper --agent code-explorer - <frontend_path> <<'EOF'
-Generate a Navigation Map for this frontend application.
+Generate a complete Navigation Map for this frontend application.
 
-PURPOSE: This document is used as context by a codeagent that generates Playwright
-.spec.ts test files. Every piece of information must be verifiable in the source code —
-exact route paths, exact button texts (Chinese), exact form field labels.
+PURPOSE: Used by a test agent to generate Playwright .spec.ts files.
+Every value in this document must come directly from the source code —
+exact routes, exact Chinese button/label text, exact form constraints.
 
-STEP 1 — Router Analysis
-Find and read the router definition file(s): src/router/index.ts, src/router/routes.ts,
-or equivalent. For each route extract:
-  - Full URL path (resolve nested routes to their complete paths)
-  - Component file path (relative)
-  - Meta: requiresAuth, roles/permissions, page title if present
-Build a complete flat route table.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PHASE 1 — COMPLETE ROUTE ENUMERATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DO NOT assume router is in a single file. Run:
+  find src/router -name "*.ts" -o -name "*.js" | sort
+  find src -name "routes.ts" -o -name "routes.js" | sort
+Read EVERY file found. For each route record:
+  - Full resolved path (flatten nested routes: parent.path + child.path)
+  - Component file (relative to src/)
+  - Meta: roles/permissions required, page title, redirect target
 
-STEP 2 — Menu / Navigation Structure
-Find navigation components by searching for: Sidebar, NavMenu, AppMenu, SideMenu, Menu
-in src/components/, src/layout/, src/views/layout/.
-Extract the COMPLETE menu tree:
-  - Top-level menu items: display text (keep Chinese), route or click action
-  - Sub-menu items: display text (keep Chinese), route
-Map: "Chinese menu text" → exact route path
+Build a COMPLETE flat route table — no truncation, no "top N" shortcut.
+If the router uses lazy imports like `() => import('./views/xxx.vue')`, still
+record the component path from the import string.
 
-STEP 3 — Page Component Analysis (top 20 routes by importance)
-Priority order: list/index pages > create/edit form pages > detail pages > others.
-For each priority page, read its component and extract:
-  - Form fields: el-form-item label (Chinese), v-model binding, required, maxlength/max/min
-  - Buttons: display text (Chinese), @click target (router push path, or submit/save action)
-  - Table columns: column labels (for verify step in tests)
-  - Select/dropdown options: option labels (Chinese)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PHASE 2 — ROLE / PERSONA DETECTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+From router meta, identify distinct user roles (e.g. student 学员, teacher 师资,
+admin 管理员, judge 评委). For each role:
+  - List the entry route after login (redirect or default home)
+  - List which route prefixes belong to this role
+  - Note the login route (may be shared or role-specific)
 
-STEP 4 — Business Flow Reconstruction
-For each logical module (group by route prefix or menu section), write the standard flows:
-  CREATE: menu path → list page → create button → form fields → submit → verify
-  EDIT: list page → row action "编辑" → form → submit → verify
-  DELETE: list page → row action "删除" → confirm dialog → verify
-  VIEW: list page → row click → detail page
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PHASE 3 — NAVIGATION STRUCTURE (MENU / SIDEBAR)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Search for sidebar/menu components:
+  grep -r "Sidebar\|NavMenu\|AppMenu\|SideMenu\|el-menu\|a-menu" src/ --include="*.vue" -l
+Read each found component fully. Extract the complete menu tree:
+  - All menu items with EXACT display text (keep Chinese as-is)
+  - The route each item navigates to
+  - Which role(s) see this item (from v-if conditions)
+Build per-role menu trees.
 
-OUTPUT: Write to .fullstack/testing/navigation-map.md using this EXACT structure:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PHASE 4 — PAGE ELEMENT EXTRACTION (ALL PAGES)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+For EVERY route found in Phase 1, read its component. Extract:
+  a) INCOMING navigation: how does a user arrive here?
+     - From which other pages via router-link / router.push / this.$router.push?
+     - Via which button text (e.g. "进入课程", "查看详情")?
+  b) OUTGOING navigation: where can the user go from here?
+     - All router.push / this.$router.push / <router-link to="..."> targets
+     - Map button text → destination route
+  c) KEY ELEMENTS (for Playwright selectors):
+     - Buttons: EXACT display text, action (submit / navigate / open-dialog)
+     - Form fields: el-form-item label, v-model, required?, maxlength/rules
+     - Table columns: header labels (for post-action verification)
+     - Tabs: tab labels and which sub-route/view each activates
 
----
+For large projects (>50 components): prioritize all list/index pages and
+create/edit form pages first; then detail/view pages; then dialogs.
+Do NOT stop at an arbitrary number — cover all routes from Phase 1.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PHASE 5 — REACHABILITY ANALYSIS (FEATURE TREE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Using the incoming/outgoing navigation data from Phase 4, build a directed
+reachability graph. For each significant feature (a page where the user
+performs a key action), find ALL paths from the login page:
+
+  Path = login → [sequence of pages/clicks] → feature page
+  Count steps (each page-transition = 1 step).
+  Identify: shortest path, alternative paths.
+
+Group features by role → module → feature name.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OUTPUT FORMAT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Write to .fullstack/testing/navigation-map.md:
+
+```markdown
 # Navigation Map
 
-Generated: <current ISO-8601 datetime, e.g. 2025-01-15T10:30:00>
-Frontend: <absolute path to frontend project>
-Router file: <relative path>
-Git commit: <output of: git rev-parse HEAD>
+Generated: <ISO-8601 datetime>
+Frontend: <absolute path>
+Git commit: <git rev-parse HEAD>
+Roles detected: <comma-separated list>
+Total routes: <N>
 
 ---
 
-## Information Architecture
+## Feature Tree
 
-### Module: <Chinese module name>
-Menu path: <左侧导航 → X → Y>
-Base route: /xxx
+### 角色：<role_name>（如 学员 / 师资 / 管理员）
 
-#### Page: <Chinese page name>
-Route: /xxx/yyy
+Login entry: <login route> → after auth → <home route>
+
+#### 模块：<module name>
+
+##### 功能：<feature description>（如"进入课程上课"、"提交作品"）
+Feature route: /xxx/yyy
 Component: src/views/xxx/yyy.vue
-Auth required: yes | no | role:<role_name>
+
+路径（按步数排序）:
+  ★ 最短路径（N步）: 首页 → 点击"<button text>" → [route /aaa] → 点击"<button text>" → [feature route]
+  路径2（M步）:       顶部导航 → 点击"<menu item>" → [route /bbb] → ...
+  路径3（M步）:       ...
+
+前置条件: <e.g. 已报名该课程 / 已创建小组>
+
+Key elements on this page:
+| Element | Type | Exact Text / Label | Constraint | Action |
+|---------|------|-------------------|------------|--------|
+| 进入课程 | Button | "进入课程" | — | router.push('/course/:id/learn') |
+| 课程名称 | Input | "课程名称" | required, maxlength=100 | v-model: form.name |
+
+---
+
+## Page Element Reference
+
+### <route path> — <Chinese page name>
+Component: src/views/xxx/yyy.vue
+Roles: <who can access>
+Reached from: <list of source pages + triggering action>
+Leads to: <list of destination pages + triggering button>
 
 Key elements:
-| Element | Type | Label / Text | Constraint | Action / Binding |
-|---------|------|-------------|------------|------------------|
-| 创建按钮 | Button | "创建XXX" | — | router.push('/xxx/create') |
-| 名称 | Input | "名称" | required, maxlength=50 | v-model: form.name |
-| 状态 | Select | "状态" | options: 启用/禁用 | v-model: form.status |
+| Element | Type | Exact Text / Label | Constraint | Action |
+|---------|------|-------------------|------------|--------|
 
 ---
 
-## Business Flows
+## Route Index
+| Role | Module | Feature | Route | Component | Steps from login |
+|------|--------|---------|-------|-----------|-----------------|
+```
 
-### Flow: 创建<业务对象>
-Precondition: logged in as <admin|user>
-Steps:
-  1. Navigate: <base_url>/login → fill username/password → click "登录"
-  2. Click: sidebar item "<exact Chinese text>"
-  3. Click: submenu item "<exact Chinese text>"
-  4. Current URL: <base_url>/xxx/list
-  5. Click: button "<exact Chinese button text>"
-  6. Current URL: <base_url>/xxx/create
-  7. Fill: field "<label>" = "<example valid value>"
-  8. Click: button "<submit button text>"
-  9. Verify: redirected to <base_url>/xxx/list, new row with "<value>" visible in table
-
-### Flow: 编辑<业务对象>
-...
-
----
-
-## Route Quick Reference
-| Module | Page | Route | Auth | Component |
-|--------|------|-------|------|-----------|
+After writing, output a summary:
+  导航地图已生成：<N> 个角色，<M> 个功能，<K> 条路由，最深路径 <X> 步
 EOF
+```
+
+Output to user:
+```
+导航地图已生成 → .fullstack/testing/navigation-map.md
+角色：<N>  |  功能：<M>  |  路由：<K>
 ```
 
 Output to user:
@@ -485,13 +586,56 @@ Then run the BDD generation prompt from fse-requirements Step 5.5 inline, writin
 
 Collect Lanhu URL via `AskUserQuestion` if not already provided in Step 1C.
 
+> **MANDATORY: Read ALL pages before generating test cases.**
+> Before calling the generation agent, use `lanhu_get_pages` to get the full page list.
+> Then use `lanhu_get_ai_analyze_page_result` with `mode="text_only"` and `page_names="all"` to do a full global scan.
+> After the global scan, do `mode="full"` reads grouped by module (per the FOUR-STAGE workflow).
+> Only after ALL pages are read and understood may test case generation begin.
+> **Never generate test cases after reading only a partial set of pages.**
+
+#### Archive requirements source first
+
+Before generating test cases, call `lanhu_get_pages` and write `$TEST_DIR/requirements-source.md`:
+
+```markdown
+# 需求来源存档
+
+## 基本信息
+来源类型: 蓝湖原型
+Lanhu URL: <url>
+文档名称: <document_name from lanhu_get_pages>
+文档 ID: <document_id>
+总页数: <total_pages>
+读取时间: <ISO-8601 timestamp>
+测试特性: <FEATURE_ID>
+
+## 页面目录
+<paste the full pages array from lanhu_get_pages as a table:>
+| 序号 | 页面名称 | 路径 | 类型 |
+|------|---------|------|------|
+
+## 需求文本（全局扫描）
+<paste the full text output from lanhu_get_ai_analyze_page_result mode="text_only" page_names="all">
+
+## 模块详情
+<for each module group analyzed with mode="full", paste the structured output here>
+```
+
+This file is the traceability record — every test case in `test-cases.md` must reference a page or flow found here.
+
 ```bash
 codeagent-wrapper --agent code-architect - . <<'EOF'
 Generate BDD test cases from a Lanhu design.
 
 Inputs:
-- Fetch Lanhu content via lanhu MCP at: <url>
-- Navigation map: .fullstack/testing/navigation-map.md
+- Lanhu URL: <url>
+- REQUIRED: Read ALL pages via lanhu MCP — first call lanhu_get_pages, then lanhu_get_ai_analyze_page_result
+  with mode="text_only" page_names="all" for global scan, then mode="full" per module group.
+  Do NOT stop after reading a subset of pages. Read EVERY page in the document.
+- Save ALL Lanhu content (page list + text scan + module details) to $TEST_DIR/requirements-source.md
+  BEFORE writing test cases. This is the traceability record.
+- Navigation map: .fullstack/testing/navigation-map.md (REQUIRED — cross-reference every test step
+  against actual routes and element texts found in the map)
 
 For each user flow found in Lanhu, generate minimum THREE test cases:
 
@@ -562,7 +706,7 @@ EOF
 
 If in FSE pipeline:
 ```bash
-python "$HOME/.claude/skills/fse/scripts/workspace.py" set-state TESTING_IN_PROGRESS
+python "$HOME/.claude/skills/fse-test/scripts/workspace.py" set-state TESTING_IN_PROGRESS
 ```
 
 #### Test scope selection (ask once, standalone mode only)
@@ -584,6 +728,93 @@ Route based on mode:
 - `lite` → **Lite Smoke Test Path**
 - Standalone "both" choice → run API path first, then Browser path
 
+> **⛔ MANDATORY GATE — Browser mode only:**
+> You MUST complete Steps 4A (Playwright workspace), 4B (config), and 4C (spec file generation)
+> before ANY browser interaction.
+> **NEVER use `mcp__playwright__` tools at this point.** MCP browser is reserved exclusively for
+> Step 4E (failure investigation after `npx playwright test` has already run and produced failures).
+> Jumping from test cases directly to MCP browser clicks is a violation of this skill — stop and
+> generate spec files first.
+
+### Step 3B — Precondition Analysis & API Setup
+
+**Every test case that requires a specific data state must set it up via API. No human setup allowed.**
+
+```bash
+codeagent-wrapper --agent code-architect - . <<'EOF'
+Analyze $TEST_DIR/test-cases.md. Extract preconditions for every test case. Classify:
+
+CATEGORY A — Can be set up via API (e.g. 开启课堂, 学员提交互动, 创建数据):
+  Identify the API endpoint from contracts/openapi.yaml or api-surface.md.
+  Write $TEST_DIR/precondition-setup.ts that:
+    1. Calls the API to create/activate the required state
+    2. Stores returned IDs/tokens in $TEST_DIR/fixtures.json
+    3. Exports a teardown() to clean up after tests
+
+CATEGORY B — Cannot be set up via API (no endpoint exists):
+  Pre-mark those TC IDs as ❌ 失败 in the execution manifest.
+  Reason: "前置条件无法自动构建：[描述]. 缺少 API 支持：[endpoint that would be needed]"
+  These tests count as FAILED immediately — untestable = failed, not skipped.
+
+CATEGORY C — No precondition (can run any time):
+  No setup needed.
+
+Write $TEST_DIR/precondition-map.md:
+| TC ID | 前置条件 | 分类 | API 端点 | 备注 |
+|-------|---------|------|---------|------|
+| TC-SCORE-01 | 活跃课堂+学员互动记录 | A | POST /class/start | — |
+| TC-EDIT-01  | 画布类互动进行中 | A | POST /interaction/start | — |
+| TC-XXX-02   | 需物理设备 | B | — | ❌ 预标记失败 |
+EOF
+```
+
+Run precondition setup:
+```bash
+cd "$TEST_DIR" && npx ts-node precondition-setup.ts 2>&1 | tee "$TEST_DIR/precondition-setup.log"
+```
+
+- Errors in log → those TC IDs → ❌ 失败（前置条件 API 调用失败），立即写入 manifest
+- Success → `fixtures.json` populated → spec files read it for test data (IDs, tokens, etc.)
+
+> **Red line**: CATEGORY B tests are pre-marked FAILED before any browser runs.
+> They lower the pass rate. This is intentional — "can't automate" is a coverage gap, not a skip.
+
+### Step 3C — Create Execution Manifest
+
+Before generating spec files, create a manifest that tracks every TC ID:
+
+```bash
+codeagent-wrapper --agent code-architect - . <<'EOF'
+Read the summary table in $TEST_DIR/test-cases.md.
+Extract every TC ID, its name, and priority.
+Write $TEST_DIR/execution-manifest.md with every case set to ⏳ 待执行.
+
+Output format exactly:
+
+# 执行清单
+
+特性: <FEATURE_ID>
+创建时间: <ISO-8601 timestamp>
+用例总数: <N>
+
+| TC ID | 名称 | 优先级 | 状态 | 执行时间 | 备注 |
+|-------|------|--------|------|----------|------|
+| TC-XXX-001 | <name> | P0 | ⏳ 待执行 | — | — |
+| TC-XXX-002 | <name> | P1 | ⏳ 待执行 | — | — |
+...
+
+Do NOT pre-fill any case as ✅ 通过 — every case starts as ⏳ 待执行.
+EOF
+```
+
+Output:
+```
+执行清单已创建：<N> 条用例待执行
+路径：$TEST_DIR/execution-manifest.md
+```
+
+> **Rule**: The manifest is the single source of truth for tested/untested status. A TC ID not updated to ✅/❌/⏭️ after the run is UNTESTED. No exceptions.
+
 ---
 
 ## Backend API Testing Path (mode: backend or standalone API choice)
@@ -591,7 +822,7 @@ Route based on mode:
 ### Generate API test plan
 
 ```bash
-python "$HOME/.claude/skills/fse/scripts/workspace.py" get-test-config
+python "$HOME/.claude/skills/fse-test/scripts/workspace.py" get-test-config
 ```
 
 ```bash
@@ -602,9 +833,9 @@ PRIMARY INPUT (load if exists): $TEST_DIR/test-cases.md
   — Extract API-testable cases. Add HTTP execution detail to each.
 
 SUPPLEMENTARY:
-- Contract: .fullstack/contracts/openapi.yaml (if exists)
+- Contract: $CONTRACTS_DIR/openapi.yaml (if exists)
 - Navigation map: .fullstack/testing/navigation-map.md (business context)
-- Requirements: .fullstack/requirements/confirmed.md (if exists)
+- Requirements: $REQ_DIR/confirmed.md (if exists)
 
 For each test case:
 
@@ -731,6 +962,49 @@ Write this exactly to playwright.config.ts with the <FEATURE_ID> and <BASE_URL> 
 EOF
 ```
 
+### Step 4C — Selector Resolution (MANDATORY pre-step before spec generation)
+
+Before writing any spec file, scan the frontend source for every visual/dynamic element referenced in "Then" assertions:
+
+```bash
+codeagent-wrapper --agent code-explorer - <frontend_path> <<'EOF'
+For each element listed below (from test-cases.md "Then" clauses), find its REAL CSS class and DOM structure.
+Elements: <paste list — e.g. "弹幕", "评分下拉框", "锁定提示">
+
+For each:
+1. Search broadly: class name / Chinese text / component name / data attribute
+2. Check ALL branches if on a feature branch — the component may be in main but not current branch
+3. Extract: exact class names, data attrs, aria labels, timing (animation duration, auto-dismiss?)
+
+Output table:
+| 元素名 | 状态 | 选择器（真实） | 可见时长 | 备注 |
+|--------|------|--------------|---------|------|
+| 金色弹幕 | ✅ 已找到 | .gold-barrage-item | 3s | 动画后DOM移除 |
+| 评分下拉框 | ✅ 已找到 | .score-dropdown | 持续可见 | |
+| 某弹窗 | ❌ 未找到 | — | — | 当前分支无此组件 |
+EOF
+```
+
+**For every element with status ❌ 未找到**: stop spec generation for those test cases. Use `AskUserQuestion`:
+
+```
+⚠️ 以下 UI 元素在当前分支源码中找不到，无法生成有效断言：
+  - [元素名] — 已搜索：src/**/*.vue **.ts
+
+可能原因：① 功能在其他分支未合并  ② 功能尚未实现  ③ 文件位置特殊
+
+请选择：
+  1. 功能在其他分支 — 告知分支名，切换后重新搜索
+  2. 功能尚未实现 — 标记相关测试用例为 ❌ 失败（功能缺失）
+  3. 提供组件文件路径 — 手动指定后继续
+```
+
+- 用户选 1 → 切换分支重新搜索，找到后继续
+- 用户选 2 → 对应 TC IDs 在 manifest 标记为 ❌ 失败（原因：功能未实现），不生成 spec，继续其余用例
+- 用户选 3 → 读指定文件提取选择器，继续
+
+Write resolved selectors to `$TEST_DIR/selector-map.md`. Spec generation uses ONLY selectors from this map.
+
 ### Step 4C — Generate Playwright Spec Files
 
 ```bash
@@ -740,25 +1014,86 @@ Generate Playwright @playwright/test spec files from the test plan.
 INPUTS:
 - Test cases (primary): $TEST_DIR/test-cases.md
 - Navigation map (REQUIRED): .fullstack/testing/navigation-map.md
+- Selector map (REQUIRED): $TEST_DIR/selector-map.md — use ONLY these selectors for dynamic elements
 - Base URL: <test_config.base_url>
 - Test accounts: <test_config.accounts as JSON>
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⛔ BANNED PATTERNS — DO NOT USE THESE IN ANY SPEC FILE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. `if (await element.isVisible()) { /* assertions */ }`
+   WHY BANNED: If element is not visible, the if-block is silently skipped.
+   No assertion runs. Playwright reports PASS. This is a fake pass.
+   FIX: Remove the if. Let `await expect(element).toBeVisible()` throw and fail the test.
+
+2. `return` inside a test body without a preceding `test.fail()` / `expect.fail()`
+   WHY BANNED: Playwright counts an early `return` as a PASS.
+   FIX: If a precondition can't be met at runtime, call `expect.fail('前置条件未满足: ...')` — this
+   records a real failure. `test.skip()` is ALSO banned — skipped = untested = failed.
+   The only acceptable terminal states are PASS or FAIL.
+
+3. `.catch(() => {})` on any `expect(...)` call
+   WHY BANNED: Swallows assertion failures. `await expect(x).not.toBeVisible().catch(() => {})` 
+   will pass even if x IS visible — the failure is eaten.
+   FIX: Remove .catch(). Let the assertion throw.
+
+4. `[class*="guess"], [title*="guess"]` CSS attribute guesses without source verification
+   WHY BANNED: Guessed selectors match nothing (or match the wrong element), producing either
+   a timeout failure or a vacuous pass on an unrelated element.
+   FIX: Use ONLY selectors from selector-map.md (sourced from actual component code).
+
+5. `await page.waitForTimeout(N)` as the ONLY wait before a screenshot assertion
+   WHY BANNED: A fixed delay doesn't guarantee the effect has appeared.
+   FIX: Use `waitForFunction` or `waitForSelector` — they wait for the actual DOM event.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 CRITICAL rules for spec generation:
   1. One .spec.ts file per MODULE (group test cases by their TC ID prefix, e.g. TC-USER-* → user.spec.ts)
   2. Each test case becomes one `test(...)` block. test.describe groups by TC type.
-  3. Use EXACT element selectors derived from the navigation map:
-     - Prefer: page.getByRole('button', { name: '创建培训' })
-     - Prefer: page.getByLabel('名称')
-     - Prefer: page.getByText('编辑').first()
-     - Avoid: page.locator('.btn-primary') — fragile class selectors
+  3. Use EXACT element selectors — prefer in this priority order:
+     a. Selectors from selector-map.md (real CSS classes from source code) — for dynamic/visual elements
+     b. page.getByRole('button', { name: '创建培训' }) — for stable interactive elements
+     c. page.getByLabel('名称') — for form fields
+     d. page.getByText('编辑').first() — for text content
+     NEVER: page.locator('[class*="guess"]') — no guessing
   4. Login helper: extract repeated login steps into a shared beforeEach or helper function.
      Do NOT repeat login code in every test.
   5. Timeout: each navigation step uses { timeout: 60000 } — handles slow backends.
   6. After form submit: await expect(page).toHaveURL(/<expected_route>/, { timeout: 60000 })
   7. Failure screenshots are automatic (playwright.config.ts screenshot: "only-on-failure").
-     Do not add manual screenshot calls in spec files.
+     ADDITIONALLY: for transient visual effects (animations, barrages, toasts), add an EXPLICIT
+     screenshot inside the test body immediately after the `toBeVisible` assertion passes —
+     that moment is when the element IS visible, so the screenshot captures it.
   8. Each test must be independent — no shared state between tests.
      Use unique test data (e.g. append Date.now() to names) to avoid conflicts.
+  9. Precondition failures at runtime → FAIL immediately, never skip:
+     ```typescript
+     // Preconditions are set up BEFORE the test runs (see Step 3B precondition-setup.ts).
+     // If a runtime check still fails, it means setup failed — treat as test failure:
+     const fixtures = JSON.parse(fs.readFileSync('$TEST_DIR/fixtures.json', 'utf8'))
+     if (!fixtures.activeClassId) {
+       // This should never happen if setup succeeded, but if it does:
+       expect.fail('前置条件未满足：活跃课堂未创建 — 检查 precondition-setup.log')
+       // test.skip() is NOT used here — skip = hidden failure
+     }
+     // Everything below asserts. No conditional wrapping of assertions.
+     await page.goto(fixtures.classUrl)
+     await expect(page.locator('.score-btn')).toBeVisible()  // ← must run, must pass
+     ```
+  10. For transient elements (barrages, toasts, notifications that auto-dismiss):
+     ```typescript
+     // Wait for element to appear in DOM (not just be visible — it may fly past quickly)
+     await page.waitForFunction(
+       (selector) => document.querySelector(selector) !== null,
+       '.actual-barrage-class',  // from selector-map.md
+       { timeout: 8000 }
+     )
+     // Take screenshot IMMEDIATELY — element is in DOM right now
+     await page.screenshot({ path: '...', fullPage: false })
+     // Then verify text while still in DOM
+     const barrage = page.locator('.actual-barrage-class').first()
+     await expect(barrage).toContainText('恭喜', { timeout: 3000 })
+     ```
 
 MULTI-USER / DUAL-BROWSER pattern (use when test case involves two roles interacting simultaneously):
   Trigger: test case describes Role A does X → Role B sees Y (e.g. messaging, notifications, shared state).
@@ -862,6 +1197,29 @@ for tc in failed_ids:
 EOF
 ```
 
+#### Update Execution Manifest
+
+After parsing pw-results.json, immediately update the manifest:
+
+```bash
+codeagent-wrapper --agent code-architect - . <<'EOF'
+Read $TEST_DIR/pw-results.json and $TEST_DIR/execution-manifest.md.
+
+For each test result in the JSON:
+  - status = "expected" (passed) → update matching TC ID row: ✅ 通过, set 执行时间 to now
+  - status = "unexpected" (failed) → update to: ❌ 失败, set 执行时间, set 备注 to first error (≤80 chars)
+  - status = "skipped" → update to: ⏭️ 跳过, set 备注 to reason
+
+Match by TC ID in test title. If a test title contains the TC ID (e.g. "TC-LOGIN-001"), update that row.
+
+Any row still showing ⏳ 待执行 after matching = UNTESTED — do NOT change it, it remains ⏳.
+
+Rewrite $TEST_DIR/execution-manifest.md with the updated statuses.
+Print one summary line:
+  ✅ 通过: <N>  ❌ 失败: <N>  ⏭️ 跳过: <N>  ⏳ 未执行: <N>
+EOF
+```
+
 **If all pass** → skip to Fix Cycle / Completion.
 
 **If any fail** → proceed to **Failure Investigation** (Step 4E), then **Fix Cycle**.
@@ -909,7 +1267,7 @@ Navigation Map: <Generated timestamp from map header>
 
 Register each failure in workspace:
 ```bash
-python "$HOME/.claude/skills/fse/scripts/workspace.py" add-issue \
+python "$HOME/.claude/skills/fse-test/scripts/workspace.py" add-issue \
   --phase testing --text "TC-<id>: <failure summary>" --severity blocking
 ```
 
@@ -923,7 +1281,7 @@ After writing individual reports, generate a consolidated summary at
 ### Determine fix strategy by environment type
 
 ```bash
-ENV_TYPE=$(python "$HOME/.claude/skills/fse/scripts/workspace.py" get-test-env | grep "^type:" | awk '{print $2}')
+ENV_TYPE=$(python "$HOME/.claude/skills/fse-test/scripts/workspace.py" get-test-env | grep "^type:" | awk '{print $2}')
 ```
 
 ---
@@ -942,8 +1300,8 @@ For each failure:
 
 Context files:
   - Navigation map: .fullstack/testing/navigation-map.md
-  - Requirements: .fullstack/requirements/confirmed.md (if exists)
-  - Contract: .fullstack/contracts/openapi.yaml (if exists)
+  - Requirements: $REQ_DIR/confirmed.md (if exists)
+  - Contract: $CONTRACTS_DIR/openapi.yaml (if exists)
   - Bug reports: $TEST_DIR/bugs/BUG-*.md
 EOF
 ```
@@ -1000,7 +1358,7 @@ fse-dev 已完成代码修复。
 
 After user confirms restart, re-scan services:
 ```bash
-python "$HOME/.claude/skills/fse/scripts/workspace.py" check-services
+python "$HOME/.claude/skills/fse-test/scripts/workspace.py" check-services
 ```
 
 All UP → re-run only failed tests (substitute actual round number for `<N>`):
@@ -1105,9 +1463,39 @@ No fix cycle, no rounds.
 
 ## Completion
 
+### Completion Gate — Mandatory before writing final report
+
+The manifest has ONLY two valid terminal states: `✅ 通过` and `❌ 失败`.
+Any row still showing `⏳ 待执行` at this point means a test that was supposed to run never ran → treat as `❌ 失败（原因：未执行到）`.
+
+First, convert any remaining `⏳ 待执行` rows:
+```bash
+codeagent-wrapper --agent code-architect - . <<'EOF'
+Read $TEST_DIR/execution-manifest.md.
+For any row still showing ⏳ 待执行: change it to ❌ 失败, reason: "未执行到（测试中止或流程错误）".
+Rewrite the manifest.
+EOF
+```
+
+Then count:
+```bash
+TOTAL=$(grep -c "^| TC-" "$TEST_DIR/execution-manifest.md" 2>/dev/null || echo "0")
+PASSED=$(grep -c "✅ 通过" "$TEST_DIR/execution-manifest.md" 2>/dev/null || echo "0")
+FAILED=$(grep -c "❌ 失败" "$TEST_DIR/execution-manifest.md" 2>/dev/null || echo "0")
+# TOTAL = PASSED + FAILED (no other states)
+```
+
+Determine completion status:
+- `FAILED = 0` → `COMPLETION_STATUS="✅ 全部通过（${PASSED}/${TOTAL}）"`
+- `FAILED > 0` AND all failures are "功能缺失/前置条件" → `COMPLETION_STATUS="⚠️ 测试完成，存在 ${FAILED} 项失败"`
+- `FAILED > 0` AND any failure is actual assertion error → `COMPLETION_STATUS="❌ 测试完成，存在 ${FAILED} 项失败（含 Bug）"`
+
+> **Red line**: There is no "未完成" status — once the gate runs, every case is either PASS or FAIL.
+> The gate converts all undecided cases to FAIL automatically.
+
 If in FSE pipeline:
 ```bash
-python "$HOME/.claude/skills/fse/scripts/workspace.py" set-state REPORTING
+python "$HOME/.claude/skills/fse-test/scripts/workspace.py" set-state REPORTING
 ```
 
 Write `$TEST_DIR/final-report.md`:
@@ -1117,16 +1505,29 @@ Write `$TEST_DIR/final-report.md`:
 
 环境: <env_name> (<type>)  |  模式: <api | browser | both | smoke>
 完成时间: <timestamp>  |  修复轮次: <N> (local only)
+完成状态: <COMPLETION_STATUS>
 
 ## 结果概览
 | 指标 | 数量 |
 |------|------|
 | 测试用例总计 | N |
-| 通过 | N |
-| 失败（已修复，local）| N |
-| 失败（Bug 已记录）| N |
-| 跳过（账号不可用）| N |
-| 覆盖 FR 数量 | N / M |
+| ✅ 通过 | N |
+| ❌ 失败（断言失败/Bug）| N |
+| ❌ 失败（前置条件无法构建）| N |
+| ❌ 失败（功能未实现）| N |
+| ❌ 失败（其他原因）| N |
+| **通过率** | PASSED / TOTAL |
+
+> 通过率分母 = 全部用例（PASS + FAIL）。未验证 = 失败，不存在例外。
+
+## 失败用例明细
+<For each ❌ row: TC ID | 原因分类 | 具体原因 | 是否有 Bug 报告>
+
+## 需求溯源
+来源类型: <蓝湖原型 | 用户文件 | 手动描述>
+原始需求: $TEST_DIR/requirements-source.md (or: 不适用)
+Lanhu URL: <url if applicable, else —>
+页面数: <N> (if Lanhu)
 
 ## Bug 报告
 位置: $TEST_DIR/bugs/BUG-SUMMARY.md
@@ -1135,13 +1536,13 @@ TAPD 提交: <N> 条 (或: 未提交)
 ## Playwright 报告
 HTML 报告: $TEST_DIR/pw-report/index.html
 JSON 结果: $TEST_DIR/pw-results.json
+执行清单: $TEST_DIR/execution-manifest.md
 
 ## 导航地图
 生成时间: <from map header>  |  前端 Git Commit: <from map header>
 
-## 已验证条目
-- [x] TC-001: <description>
-- [ ] TC-002: <description> — FAILED: <reason>
+## 用例执行状态
+<Copy the full manifest table here — all TC IDs with their final status>
 
 ## 注意事项
 测试数据清理：本次测试可能创建了临时数据，请人工检查并清理。
@@ -1150,8 +1551,8 @@ JSON 结果: $TEST_DIR/pw-results.json
 
 Output:
 ```
-测试完成  [<env_name> · <mode>]
-通过: <N> / <total>  |  Bug: <N> 条
+<COMPLETION_STATUS>  [<env_name> · <mode>]
+已执行: <EXECUTED> / <TOTAL>  |  通过: <PASSED>  |  失败: <FAILED>  |  未执行: <UNTESTED>
 Bug 报告: $TEST_DIR/bugs/BUG-SUMMARY.md
 Playwright 报告: $TEST_DIR/pw-report/index.html
 <promise>FSE_PHASE_COMPLETE</promise>

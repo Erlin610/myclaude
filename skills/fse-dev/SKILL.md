@@ -54,6 +54,13 @@ If invoked by FSE orchestrator, skip this step entirely.
 python "$HOME/.claude/skills/fse/scripts/workspace.py" set-state DEVELOPMENT_IN_PROGRESS
 ```
 
+```bash
+FEATURE_ID=$(python "$HOME/.claude/skills/fse/scripts/workspace.py" get-feature-id 2>/dev/null)
+REQ_DIR=".fullstack/requirements/$FEATURE_ID"
+ANALYSIS_DIR=".fullstack/analysis/$FEATURE_ID"
+CONTRACTS_DIR=".fullstack/contracts/$FEATURE_ID"
+```
+
 ## Step 2 — Load task graph
 
 Read `.fullstack/tasks/task-graph.json`. Group tasks by execution wave:
@@ -82,17 +89,17 @@ workdir: <project_path>
 Implement: <task_name>
 
 Context:
-- Requirements: .fullstack/requirements/confirmed.md
-- API Contract: .fullstack/contracts/openapi.yaml
-- Analysis plan: .fullstack/analysis/<project>-plan.md
-- Design Spec: .fullstack/requirements/design-spec.md (exact visual specs — use these CSS values directly)
+- Requirements: $REQ_DIR/confirmed.md
+- API Contract: $CONTRACTS_DIR/openapi.yaml
+- Analysis plan: $ANALYSIS_DIR/<project>-plan.md
+- Design Spec: $REQ_DIR/design-spec.md (exact visual specs — use these CSS values directly)
 - Task: <task description from task-graph>
 
 Implementation rules:
 1. Follow ALL patterns found in the existing codebase — do not introduce new conventions.
-2. Frontend: match exact endpoint paths/schemas from .fullstack/contracts/openapi.yaml.
+2. Frontend: match exact endpoint paths/schemas from $CONTRACTS_DIR/openapi.yaml.
    Use mock data only if the backend task is not yet complete (check dependencies).
-3. Backend: implement endpoints exactly as specified in .fullstack/contracts/openapi.yaml.
+3. Backend: implement endpoints exactly as specified in $CONTRACTS_DIR/openapi.yaml.
    Include request validation, error handling, and auth checks.
 4. Write or update unit tests for every changed module.
 5. Frontend: apply exact dimensions, colors, fonts, spacing from design-spec.md (if exists).
@@ -146,9 +153,9 @@ Evaluate every changed file against:
    - A07 Auth Failures: are there endpoints reachable without authentication/authorization that require it?
    - A10 SSRF: is a user-supplied URL or file path passed to an HTTP client or file reader without allowlist validation?
    Any confirmed vulnerability is automatically Critical (confidence=100).
-4. **Contract compliance** — frontend API calls must exactly match .fullstack/contracts/openapi.yaml
+4. **Contract compliance** — frontend API calls must exactly match $CONTRACTS_DIR/openapi.yaml
    (method, path, request body, response handling). Any mismatch is Critical.
-5. **Requirements coverage** — cross-check .fullstack/requirements/confirmed.md.
+5. **Requirements coverage** — cross-check $REQ_DIR/confirmed.md.
    Flag any acceptance criterion that the code does NOT satisfy.
 6. **Edge cases** — empty input, max values, concurrent access, network failure paths.
 7. **SOLID principles** — for each modified class or module:
@@ -257,7 +264,7 @@ After all backend tasks complete, generate API docs:
 ```bash
 codeagent-wrapper --agent code-reviewer - <backend_path> <<'EOF'
 Generate a complete API integration guide from the implemented endpoints.
-Reference: .fullstack/contracts/openapi.yaml
+Reference: $CONTRACTS_DIR/openapi.yaml
 
 For each endpoint, document:
 1. Full URL with base path
@@ -268,7 +275,7 @@ For each endpoint, document:
 6. Curl example
 7. Frontend JavaScript fetch/axios example
 
-Write the guide to .fullstack/contracts/api-integration-guide.md
+Write the guide to $CONTRACTS_DIR/api-integration-guide.md
 EOF
 ```
 
@@ -288,7 +295,7 @@ Output:
 已完成任务: <N>/<N>
 已执行波次: <N>
 代码审查: 全部通过
-API 文档: .fullstack/contracts/api-integration-guide.md
+API 文档: $CONTRACTS_DIR/api-integration-guide.md
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 <promise>FSE_PHASE_COMPLETE</promise>
 ```

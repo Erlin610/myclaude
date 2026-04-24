@@ -28,6 +28,13 @@ python "$HOME/.claude/skills/fse/scripts/workspace.py" set-state ANALYSIS_IN_PRO
 python "$HOME/.claude/skills/fse/scripts/workspace.py" get-mode
 ```
 
+```bash
+FEATURE_ID=$(python "$HOME/.claude/skills/fse/scripts/workspace.py" get-feature-id 2>/dev/null)
+REQ_DIR=".fullstack/requirements/$FEATURE_ID"
+ANALYSIS_DIR=".fullstack/analysis/$FEATURE_ID"
+mkdir -p "$ANALYSIS_DIR"
+```
+
 Read `current_feature.scope` from `workspace.json`. Only analyze projects whose type is in scope:
 - `backend` in scope → analyze all registered backend projects
 - `frontend` in scope → analyze all registered frontend projects
@@ -45,8 +52,8 @@ workdir: <project_path>
 ---CONTENT---
 Analyze this <frontend|backend> project against the confirmed requirements below.
 
-Requirements: .fullstack/requirements/confirmed.md
-Design Spec: .fullstack/requirements/design-spec.md (if exists — contains exact dimensions,
+Requirements: $REQ_DIR/confirmed.md
+Design Spec: $REQ_DIR/design-spec.md (if exists — contains exact dimensions,
 colors, fonts, spacing in the project's configured CSS unit. Use these values directly in
 component implementations. Do NOT approximate — every value is extracted from the design tool.)
 
@@ -130,7 +137,7 @@ Use `lanhu` MCP to download each identified asset:
 - Icons → `.fullstack/assets/icons/<name>.svg`
 
 **Verify design spec coverage:**
-- Check if `.fullstack/requirements/design-spec.md` exists (generated during requirements phase).
+- Check if `$REQ_DIR/design-spec.md` (i.e. .fullstack/requirements/<FEATURE_ID>/design-spec.md) exists (generated during requirements phase).
 - If it exists, verify it covers all pages/components identified in the analysis output.
 - If any page/component is missing from the spec, log a warning:
   `WARN: design-spec.md 缺少以下页面/组件的设计规格：<list>. 开发时将依赖截图参考。`
@@ -144,10 +151,10 @@ codeagent-wrapper --agent code-architect - . <<'EOF'
 Perform a first-principles validation of the analysis results.
 
 Inputs:
-- Confirmed requirements: .fullstack/requirements/confirmed.md
+- Confirmed requirements: $REQ_DIR/confirmed.md
   (Pay special attention to the "Bedrock Truths" and "Business Invariants" sections)
-- Frontend analysis: .fullstack/analysis/frontend-<name>.md (if exists)
-- Backend analysis:  .fullstack/analysis/backend-<name>.md (if exists)
+- Frontend analysis: $ANALYSIS_DIR/frontend-<name>.md (if exists)
+- Backend analysis:  $ANALYSIS_DIR/backend-<name>.md (if exists)
 
 Answer each question with evidence:
 
@@ -181,9 +188,9 @@ EOF
 
 ## Step 5 — Write implementation plan documents
 
-Write per-project plans to `.fullstack/analysis/<type>-<name>.md` (one per project).
+Write per-project plans to `$ANALYSIS_DIR/<type>-<name>.md` (i.e. .fullstack/analysis/<FEATURE_ID>/<type>-<name>.md) (one per project).
 
-Also write API surface outline to `.fullstack/analysis/api-surface.md` (backend scope only):
+Also write API surface outline to `$ANALYSIS_DIR/api-surface.md` (i.e. .fullstack/analysis/<FEATURE_ID>/api-surface.md) (backend scope only):
 
 ```markdown
 # API Surface Outline
@@ -252,8 +259,8 @@ GATE-2：实现方案确认
 
 发现缺口：<N>  |  过度工程标记：<N>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-完整方案：.fullstack/analysis/
-验证报告：.fullstack/analysis/validation-report.md
+完整方案：.fullstack/analysis/<FEATURE_ID>/（即 $ANALYSIS_DIR/）
+验证报告：.fullstack/analysis/<FEATURE_ID>/validation-report.md（即 $ANALYSIS_DIR/validation-report.md）
 
   1. 确认 — 继续
   2. 修改 — 提供反馈
@@ -276,7 +283,7 @@ When mode is `lite`, skip the full analysis and validation pass. Run one fast ta
 codeagent-wrapper --agent code-explorer - <primary_workdir> <<'EOF'
 Quick analysis for a small change.
 
-Requirements summary: .fullstack/requirements/confirmed.md
+Requirements summary: $REQ_DIR/confirmed.md
 
 Identify:
 1. AFFECTED FILES — exact list (path + why, ≤8 files expected for lite mode)
@@ -287,5 +294,5 @@ If affected files exceed 8, flag: "这可能超出 lite 任务的范围——请
 EOF
 ```
 
-Write result to `.fullstack/analysis/lite-plan.md`. Advance state to `ANALYSIS_CONFIRMED` immediately.
+Write result to `$ANALYSIS_DIR/lite-plan.md` (i.e. .fullstack/analysis/<FEATURE_ID>/lite-plan.md). Advance state to `ANALYSIS_CONFIRMED` immediately.
 Lite 模式无需用户确认门控。

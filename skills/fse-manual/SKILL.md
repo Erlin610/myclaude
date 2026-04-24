@@ -21,6 +21,9 @@ Identifies everything that requires human intervention before integration testin
 ## Step 1 — Mark state
 
 ```bash
+FEATURE_ID=$(python "$HOME/.claude/skills/fse/scripts/workspace.py" get-feature-id 2>/dev/null)
+TASKS_DIR=".fullstack/tasks/$FEATURE_ID"
+mkdir -p "$TASKS_DIR"
 python "$HOME/.claude/skills/fse/scripts/workspace.py" set-state MANUAL_TASKS_PENDING
 ```
 
@@ -71,7 +74,7 @@ EOF
 
 ## Step 3 — Write manual tasks checklist
 
-Write `.fullstack/tasks/manual-checklist.md`:
+Write `$TASKS_DIR/manual-checklist.md` (i.e. `.fullstack/tasks/<FEATURE_ID>/manual-checklist.md`):
 
 ```markdown
 # Manual Tasks Checklist
@@ -134,7 +137,7 @@ The following must be completed manually before integration:
 
 [manual-checklist.md content]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Full checklist: .fullstack/tasks/manual-checklist.md
+Full checklist: $TASKS_DIR/manual-checklist.md
 
 请完成上述必填项，然后确认：
 

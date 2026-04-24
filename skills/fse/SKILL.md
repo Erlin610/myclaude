@@ -104,15 +104,24 @@ Otherwise, use `AskUserQuestion` with these options:
 **User selects "▶ 继续当前工作"** → skip to Step 5.
 
 **User selects "🆕 开始新需求"**:
-1. If current state is not `WORKSPACE_READY` or `COMPLETED`, mark suspended:
+1. **Only if** current state is NOT `WORKSPACE_READY` AND NOT `COMPLETED`:
+   Mark the in-progress session as suspended (so it can be resumed later):
    ```bash
    python "$HOME/.claude/skills/fse/scripts/workspace.py" session-update-status \
      --session-id <current_feature_id> --status suspended
    ```
+   > **CRITICAL**: Do NOT call `session-update-status` if state is `COMPLETED`.
+   > Completed sessions are immutable — changing their status to "suspended" before
+   > calling `set-state` would allow `_auto_save_session` to overwrite their artifacts.
+   > If state is `COMPLETED`, skip this step entirely.
 2. Reset state:
    ```bash
    python "$HOME/.claude/skills/fse/scripts/workspace.py" set-state WORKSPACE_READY
    ```
+   > `set-state` triggers an internal auto-save. Because `set-mode` has not yet been
+   > called, the auto-save still sees the old `current_feature.id`. The `_auto_save_session`
+   > function now guards against overwriting completed sessions, but the safest approach
+   > is to reach Step 3 (`set-mode`) as quickly as possible.
 3. Continue to Step 3.
 
 ---
