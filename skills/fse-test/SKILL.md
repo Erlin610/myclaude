@@ -64,6 +64,24 @@ Two execution contexts:
 
 13. **选择器必须来自源码，不得猜测。** 在生成 spec 前，动态元素（动画、弹幕、Toast、弹窗）的 CSS class 必须从前端源码中读取。禁止 `[class*="xxx"]` 猜测模式。
 
+14. **认证助手必须断言登录成功，禁止吞掉认证错误。这是红线规则。**
+    生成的 `helpers/auth.ts` 每个角色的登录流程末尾 **必须** 有以下断言：
+    ```typescript
+    await expect(page).toHaveURL(/<登录后的路径正则>/, { timeout: 60000 })
+    ```
+    违禁模式（永久禁止）：
+    - `await page.waitForURL(...).catch(() => {})` — 吞掉登录超时，测试继续在登录页执行
+    - `await page.waitForLoadState(...).catch(() => {})` — 吞掉加载失败
+    - 任何在认证流程中使用 `.catch(() => {})` 吞掉错误的写法
+    
+    导航到受保护路由后，**必须** 紧跟验证当前页面不是登录页：
+    ```typescript
+    await page.goto(`${BASE}/protected/route`)
+    await expect(page).not.toHaveURL(/loginPage|login/, { timeout: 10000 })
+    ```
+    
+    **根本原因**：登录失败时 `.catch(() => {})` 会让测试继续在登录页执行。后续 `page.goto('/protected')` 被重定向回登录页，截图显示登录页，但没有任何断言失败 → 假通过。这是"截图显示未登录却报告通过"问题的根源。
+
 ---
 
 ## Step 0 — Context Detection and Setup
@@ -1094,6 +1112,36 @@ CRITICAL rules for spec generation:
      const barrage = page.locator('.actual-barrage-class').first()
      await expect(barrage).toContainText('恭喜', { timeout: 3000 })
      ```
+
+  11. Login assertion rule (non-negotiable — prevents "unauthenticated page passes"):
+      The generated `helpers/auth.ts` MUST use this pattern for every role:
+      ```typescript
+      // ✅ CORRECT — fails immediately if login didn't work
+      async function loginAsTeacher(page: Page): Promise<void> {
+        await page.goto(`${BASE}/student/loginPage/index`)
+        await page.getByText('师资用户').click()
+        await page.locator('input[placeholder*="手机号"]').fill(TEACHER.username)
+        await page.locator('input[type="password"]').fill(TEACHER.password)
+        await page.getByRole('button', { name: /登\s*录/ }).click()
+        // MANDATORY assertion — if login failed, test fails HERE, not silently on the protected page
+        await expect(page).toHaveURL(/mycurricular|SelectDepartLoginTeacher/, { timeout: 25000 })
+        // Handle org selection if needed, then assert final state
+        if (page.url().includes('SelectDepartLoginTeacher')) {
+          await page.locator('.el-select').first().click()
+          await page.locator('.el-select-dropdown__item').first().click()
+          await page.locator('button', { hasText: '确认' }).click()
+          await expect(page).toHaveURL(/mycurricular/, { timeout: 20000 })
+        }
+      }
+      ```
+      ```typescript
+      // ❌ BANNED — swallows login failure, test continues on login page
+      await page.waitForURL(/mycurricular/, { timeout: 25_000 }).catch(() => {})
+      ```
+      Additionally, after any `page.goto('/protected/route')`, immediately assert:
+      ```typescript
+      await expect(page).not.toHaveURL(/loginPage|login/, { timeout: 10000 })
+      ```
 
 MULTI-USER / DUAL-BROWSER pattern (use when test case involves two roles interacting simultaneously):
   Trigger: test case describes Role A does X → Role B sees Y (e.g. messaging, notifications, shared state).
