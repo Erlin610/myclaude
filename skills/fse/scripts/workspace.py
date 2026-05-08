@@ -294,6 +294,15 @@ def _auto_save_session(data: dict):
     if existing_status == "completed":
         return
 
+    # GUARD: WORKSPACE_READY means the workspace is being reset to start a new feature.
+    # Writing this state into the current feature's snapshot would corrupt the resume point —
+    # restoring the session would land at WORKSPACE_READY instead of where work was suspended.
+    # Skip the auto-save entirely; the suspend flow must call session-save explicitly before
+    # calling set-state WORKSPACE_READY to preserve the correct resume state.
+    current_state = data.get("state", "")
+    if current_state == "WORKSPACE_READY" and existing_status == "suspended":
+        return
+
     # Derive human-readable name from requirements description (once available).
     # Upgrade from the feat-xxx placeholder to a real name as soon as user_description is set,
     # but never overwrite a name that was explicitly customised (i.e. not the feat-xxx default).
