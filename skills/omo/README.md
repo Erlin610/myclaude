@@ -21,7 +21,7 @@ python install.py --module omo
 | `oracle` | Technical advisor | claude | claude-opus-4-5 |
 | `librarian` | External research | claude | claude-sonnet-4-5 |
 | `explore` | Codebase search | opencode | grok-code |
-| `develop` | Code implementation | codex | gpt-5.2 |
+| `develop` | Code implementation | codex | gpt-5.5 |
 | `frontend-ui-ux-engineer` | UI/UX specialist | gemini | gemini-3-pro |
 | `document-writer` | Documentation | gemini | gemini-3-flash |
 
@@ -123,7 +123,7 @@ Agent-model mappings in `~/.codeagent/models.json`:
 ```json
 {
   "default_backend": "codex",
-  "default_model": "gpt-5.2",
+  "default_model": "gpt-5.5",
   "agents": {
     "oracle": {
       "backend": "claude",
@@ -149,7 +149,7 @@ Agent-model mappings in `~/.codeagent/models.json`:
     },
     "develop": {
       "backend": "codex",
-      "model": "gpt-5.2",
+      "model": "gpt-5.5",
       "yolo": true,
       "reasoning": "xhigh"
     }

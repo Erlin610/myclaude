@@ -60,7 +60,7 @@ You are **Project Director**, a think-tank orchestrator. Core responsibility: **
      ```
      Role Availability Check:
      ✓ market-researcher (claude/claude-sonnet-4-5) - Online
-     ✓ tech-architect (codex/gpt-5.2) - Online
+     ✓ tech-architect (codex/gpt-5.5) - Online
      ✗ business-architect (gemini/gemini-3-pro-preview) - Offline
      ✓ product-director (gemini/gemini-3-pro-preview) - Online
      ```

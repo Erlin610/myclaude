@@ -124,7 +124,7 @@ python3 install.py --module think-tank
     },
     "operations-architect": {
       "backend": "codex",
-      "model": "gpt-5.2",
+      "model": "gpt-5.5",
       "description": "运营/供应链架构师"
     },
     "legal-advisor": {
@@ -139,7 +139,7 @@ python3 install.py --module think-tank
     },
     "tech-architect": {
       "backend": "codex",
-      "model": "gpt-5.2",
+      "model": "gpt-5.5",
       "description": "技术架构师"
     }
   }

@@ -3,7 +3,7 @@
   "experts": {
     "business-architect": {
       "backend": "codex",
-      "model": "gpt-5.2",
+      "model": "gpt-5.5",
       "timeout": 3600,
       "description": "商业/财务架构师：盈利模型、资金流、UE模型"
     },
@@ -15,7 +15,7 @@
     },
     "operations-architect": {
       "backend": "codex",
-      "model": "gpt-5.2",
+      "model": "gpt-5.5",
       "timeout": 3600,
       "description": "运营/供应链架构师：流程设计、运力规划"
     },
@@ -33,7 +33,7 @@
     },
     "tech-architect": {
       "backend": "codex",
-      "model": "gpt-5.2",
+      "model": "gpt-5.5",
       "timeout": 3600,
       "description": "技术架构师：技术选型、架构设计"
     }
