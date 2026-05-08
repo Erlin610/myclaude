@@ -1,11 +1,11 @@
 ---
 name: fse-dev
-description: Execute parallel frontend and backend development using codeagent-wrapper (codex develop agent). Mandatory code review (correctness + simplicity) after every development batch. BLOCKING issues require user decision. MINOR issues are auto-fixed. Produces API documentation on backend completion.
+description: Execute parallel frontend and backend development using codeagent-wrapper (codex develop agent). Each wave gets a just-in-time architecture blueprint before implementation. Two-stage serial review (spec compliance → code quality) after every wave. BLOCKING issues require user decision. MINOR issues are auto-fixed. Produces API documentation on backend completion.
 ---
 
 # FSE-Dev — Development with Mandatory Code Review
 
-Executes the task graph from `fse-analysis`. All code is written by `codeagent-wrapper` using the `develop` (codex) agent. After every development batch, `code-reviewer` runs in parallel — this step is never skipped.
+Executes the task graph from `fse-analysis`. Each wave is preceded by a just-in-time architecture design step that produces a concrete implementation blueprint. All code is written by `codeagent-wrapper` using the `develop` (codex) agent. After every wave, two-stage serial review runs: spec compliance first, then code quality — this sequence is never reversed or skipped.
 
 ## Language Requirement
 
@@ -15,13 +15,15 @@ Executes the task graph from `fse-analysis`. All code is written by `codeagent-w
 
 1. **Never write code directly.** All implementation delegated to `codeagent-wrapper --agent develop`. If you find yourself using Edit/Write/MultiEdit tools on project files, STOP and delegate to codeagent-wrapper instead.
 2. **Never use the `Agent` tool for development tasks.** The `Agent` tool spawns subagents inside the current Claude Code session and still triggers permission prompts. ALL parallel development MUST be done via `Bash` tool calling `codeagent-wrapper --parallel`. This is the only way to achieve prompt-free parallel execution.
-3. **Always prefix develop agent calls with `CODEAGENT_SKIP_PERMISSIONS=true`** to avoid per-file confirmation prompts. Read-only agents (code-reviewer) do NOT need this prefix.
-4. **Code review is mandatory** after every batch. No exceptions.
-5. **BLOCKING review issues** → present to user: "Fix now / Proceed as-is".
-6. **MINOR review issues** → auto-fix via `develop` agent without asking.
-7. **Contract is law.** All implementation must match `.fullstack/contracts/openapi.yaml` exactly.
-8. If codeagent-wrapper is unavailable → BLOCK, inform user.
-9. **All user-facing questions and confirmations MUST use `AskUserQuestion` tool.** Never show text prompts expecting free-form reply.
+3. **Always prefix develop agent calls with `CODEAGENT_SKIP_PERMISSIONS=true`** to avoid per-file confirmation prompts. Read-only agents (code-reviewer, code-architect) do NOT need this prefix.
+4. **Just-in-time blueprint is mandatory before each wave.** Never dispatch develop agents with only analysis cold-data. Always run code-architect first to produce a concrete blueprint for that wave's tasks.
+5. **Two-stage serial review is mandatory after every wave.** Stage 1 (spec compliance) must complete before Stage 2 (code quality) starts. Never run them in parallel — spec violations must be fixed before quality issues are evaluated.
+6. **BLOCKING review issues** → present to user: "Fix now / Proceed as-is".
+7. **MINOR review issues** → auto-fix via `develop` agent without asking.
+8. **Contract is law.** All implementation must match `.fullstack/contracts/openapi.yaml` exactly.
+9. If codeagent-wrapper is unavailable → BLOCK, inform user.
+10. **All user-facing questions and confirmations MUST use `AskUserQuestion` tool.** Never show text prompts expecting free-form reply.
+11. **Per-task verification gate.** After each develop wave, verify actual file changes exist (`git diff --stat`) and existing tests still pass. A wave with zero file changes or broken tests is a FAILED wave — do not advance state.
 
 ## Step 0 — Standalone detection (only when invoked directly, not from FSE orchestrator)
 
@@ -61,7 +63,7 @@ ANALYSIS_DIR=".fullstack/analysis/$FEATURE_ID"
 CONTRACTS_DIR=".fullstack/contracts/$FEATURE_ID"
 ```
 
-## Step 2 — Load task graph
+## Step 2 — Load and validate task graph
 
 Read `.fullstack/tasks/task-graph.json`. Group tasks by execution wave:
 - **Wave A**: all tasks with no dependencies (run in parallel)
@@ -69,15 +71,92 @@ Read `.fullstack/tasks/task-graph.json`. Group tasks by execution wave:
 - **Wave C**: tasks whose dependencies are all in Wave A or B
 - Continue until all tasks are assigned to a wave.
 
+### Task granularity check
+
+For each task with `complexity: High`, split it before execution. Run:
+
+```bash
+codeagent-wrapper --agent code-architect - <project_path> <<'EOF'
+The following task is marked High complexity and must be split into atomic sub-tasks.
+Each sub-task must be completable in under 5 minutes and touch at most 3 files.
+
+Task to split:
+- ID: <task_id>
+- Name: <task_name>
+- Description: <task_description>
+- Affected files: <file_list>
+
+Requirements: $REQ_DIR/confirmed.md
+Analysis plan: $ANALYSIS_DIR/<project>-plan.md
+
+Output a numbered list of sub-tasks. For each sub-task:
+1. ID: <parent_id>_<n>
+2. Name: imperative verb phrase (≤8 words)
+3. Files: exact file paths (≤3 files)
+4. What to implement: one concrete paragraph, no vague descriptions
+5. Dependencies: sub-task IDs that must complete first (or "none")
+EOF
+```
+
+Replace the High-complexity task in the wave with its sub-tasks before proceeding.
+
 ## Step 3 — Execute each wave
 
 > **EXECUTION METHOD (mandatory):** Use the `Bash` tool to call `codeagent-wrapper --parallel`.
 > Do NOT use the `Agent` tool. The correct invocation always looks like a `Bash` tool call
 > with a heredoc. If you are about to use the `Agent` tool, stop and use the template below instead.
 
-For each wave, run all tasks in parallel using `codeagent-wrapper --parallel`.
+Each wave has three sub-steps: **3A blueprint → 3B implement → 3C verify**. Never skip 3A.
 
-### Parallel execution template
+### Step 3A — Just-in-time architecture blueprint (before EVERY wave)
+
+Before dispatching develop agents, run code-architect in parallel for each task in the wave.
+This produces a concrete implementation blueprint that develop agents use as their primary input.
+
+```bash
+codeagent-wrapper --parallel <<'EOF'
+---TASK---
+id: blueprint_<task_id>
+agent: code-architect
+workdir: <project_path>
+---CONTENT---
+Produce a concrete implementation blueprint for this task. The develop agent will implement
+exactly what you specify here — be precise, not vague.
+
+Task: <task_name>
+Description: <task_description>
+Affected files (from analysis): <file_list>
+
+Inputs to read:
+- Requirements: $REQ_DIR/confirmed.md
+- API Contract: $CONTRACTS_DIR/openapi.yaml (if exists)
+- Analysis plan: $ANALYSIS_DIR/<project>-plan.md
+- Design Spec: $REQ_DIR/design-spec.md (if exists)
+
+Your blueprint MUST include:
+1. **File touch list** — for each file: path, action (CREATE/MODIFY), exact changes needed
+2. **Key code patterns** — for each new function/component: signature, inputs, outputs, edge cases
+3. **Reuse map** — existing utilities, components, or patterns to reuse (with file:line references)
+4. **Integration points** — how this task connects to other tasks in this wave (shared state, API calls)
+5. **Verification command** — the exact shell command to run after implementation to confirm correctness
+   (e.g. `npm run test -- --testPathPattern=UserCard`, `go test ./internal/user/...`)
+
+Do NOT write implementation code. Write a blueprint precise enough that a developer with
+zero prior context could implement it correctly on the first attempt.
+---TASK---
+id: blueprint_<task_id_2>
+agent: code-architect
+workdir: <project_path_2>
+---CONTENT---
+...
+EOF
+```
+
+Collect all blueprint outputs. Each develop task in Step 3B will reference its blueprint.
+
+### Step 3B — Parallel implementation
+
+Run all tasks in the wave in parallel using `codeagent-wrapper --parallel`.
 
 ```bash
 CODEAGENT_SKIP_PERMISSIONS=true codeagent-wrapper --parallel <<'EOF'
@@ -88,27 +167,23 @@ workdir: <project_path>
 ---CONTENT---
 Implement: <task_name>
 
-Context:
+## Blueprint (primary input — follow this exactly)
+<paste full blueprint output from Step 3A for this task>
+
+## Supporting context
 - Requirements: $REQ_DIR/confirmed.md
 - API Contract: $CONTRACTS_DIR/openapi.yaml
-- Analysis plan: $ANALYSIS_DIR/<project>-plan.md
-- Design Spec: $REQ_DIR/design-spec.md (exact visual specs — use these CSS values directly)
-- Task: <task description from task-graph>
+- Design Spec: $REQ_DIR/design-spec.md (exact visual specs — copy CSS values directly, do NOT approximate)
 
-Implementation rules:
-1. Follow ALL patterns found in the existing codebase — do not introduce new conventions.
-2. Frontend: match exact endpoint paths/schemas from $CONTRACTS_DIR/openapi.yaml.
-   Use mock data only if the backend task is not yet complete (check dependencies).
-3. Backend: implement endpoints exactly as specified in $CONTRACTS_DIR/openapi.yaml.
+## Implementation rules
+1. Follow the blueprint's file touch list exactly — do not modify files not listed there.
+2. Reuse existing patterns identified in the blueprint's reuse map.
+3. Frontend: match exact endpoint paths/schemas from $CONTRACTS_DIR/openapi.yaml.
+4. Backend: implement endpoints exactly as specified in $CONTRACTS_DIR/openapi.yaml.
    Include request validation, error handling, and auth checks.
-4. Write or update unit tests for every changed module.
-5. Frontend: apply exact dimensions, colors, fonts, spacing from design-spec.md (if exists).
-   All values are already in the project's configured CSS unit — copy them directly.
-   Do NOT approximate colors or round dimension values.
-6. Do not modify files outside the scope of this task.
-
-Affected files (from analysis):
-<list from task-graph>
+5. Write or update unit tests for every changed module.
+6. After implementation, run the verification command from the blueprint and confirm it passes.
+   If it fails, fix the issue before completing.
 
 ---TASK---
 id: <task_id_2>
@@ -119,26 +194,86 @@ workdir: <project_path_2>
 EOF
 ```
 
+### Step 3C — Per-wave verification gate
+
+After the wave completes, verify before advancing:
+
+```bash
+# 1. Confirm actual file changes exist
+git -C <project_path> diff --stat HEAD~1
+```
+
+If `git diff --stat` shows 0 files changed → the develop agent made no changes. This is a FAILED wave.
+Use `AskUserQuestion`:
+```
+波次 <N> 验证失败：develop agent 未产生任何文件变更。
+可能原因：任务描述不够具体 / 蓝图缺少文件路径 / agent 遇到阻塞未报告。
+
+选择处理方式：
+```
+Options: `重新执行本波次（使用更具体的蓝图）` / `跳过本波次（标记为失败）` / `手动检查后继续`
+
+```bash
+# 2. Run existing tests to confirm no regressions
+<project_test_command>  # e.g. npm test, go test ./..., pytest
+```
+
+If tests fail → FAILED wave. Present failures to user with same AskUserQuestion pattern.
+
+Only advance to Step 4 if both checks pass.
+
 ### Track task status after each wave
 
 ```bash
 python "$HOME/.claude/skills/fse/scripts/workspace.py" task-update --id <id> --status completed
 ```
 
-## Step 4 — Mandatory code review (after EVERY wave)
+## Step 4 — Two-stage serial review (after EVERY wave)
 
-Run two reviews in parallel immediately after each wave. **Review scope = `git diff` of actual changes**, not vague wave descriptions.
+Review runs in two stages. **Stage 1 must complete and pass before Stage 2 starts.**
+Rationale: spec violations invalidate quality judgments — no point reviewing code quality
+if the implementation doesn't match the contract.
+
+### Stage 1 — Spec compliance review
+
+```bash
+codeagent-wrapper --agent code-reviewer - <primary_project_path> <<'EOF'
+Review the code changes from this wave for SPEC COMPLIANCE ONLY.
+Run `git diff HEAD~1` (or `git diff <base_branch>...HEAD`) to see actual changes.
+
+Evaluate against:
+1. **Contract compliance** — every frontend API call must exactly match $CONTRACTS_DIR/openapi.yaml:
+   method, path, request body shape, response field names. Any mismatch is Critical.
+2. **Requirements coverage** — cross-check $REQ_DIR/confirmed.md.
+   For each acceptance criterion: does the code satisfy it? Flag any criterion NOT satisfied.
+3. **Blueprint compliance** — does the implementation match the blueprint produced in Step 3A?
+   Flag any deviation from the blueprint's file touch list or key code patterns.
+
+Confidence scoring (report ONLY issues scoring ≥ 80):
+  100 — Confirmed mismatch, will definitely cause integration failure
+   80 — Very likely real issue, evidence is strong
+
+Output format:
+SPEC VIOLATIONS (confidence ≥ 80):
+- [file:line] confidence=XX | <description> | Fix: <concrete suggestion>
+
+If no violations ≥ 80: output "SPEC COMPLIANCE PASSED"
+EOF
+```
+
+**If Stage 1 has SPEC VIOLATIONS** → fix them first (same flow as Step 5 CRITICAL handling) before running Stage 2. Do not proceed to Stage 2 with unresolved spec violations.
+
+### Stage 2 — Code quality review (only after Stage 1 passes)
 
 ```bash
 codeagent-wrapper --parallel <<'EOF'
 ---TASK---
-id: review_quality_wave<N>
+id: review_correctness_wave<N>
 agent: code-reviewer
 workdir: <primary_project_path>
 ---CONTENT---
-Review the code changes introduced in this wave using `git diff` as the source of truth.
-
-Scope: run `git diff HEAD~1` (or `git diff <base_branch>...HEAD`) to see actual changes.
+Review the code changes from this wave for CORRECTNESS AND SECURITY.
+Run `git diff HEAD~1` to see actual changes. Spec compliance has already been verified — focus only on quality.
 
 Evaluate every changed file against:
 1. **Project conventions** — check CLAUDE.md (if exists) for explicit rules on imports,
@@ -147,27 +282,22 @@ Evaluate every changed file against:
 2. **Correctness** — logic errors, null/undefined handling, off-by-one, race conditions,
    missing await, incorrect state transitions.
 3. **Security (OWASP Top 10 — check only items relevant to this change)**:
-   - A01 Broken Access Control (IDOR): can a user access/modify another user's data by changing an ID in the URL/body?
-   - A02 Cryptographic Failures: are secrets, tokens, or passwords logged, stored in plaintext, or returned in responses?
-   - A03 Injection: is user input concatenated (not parameterized) into SQL queries, OS commands, or log statements?
-   - A07 Auth Failures: are there endpoints reachable without authentication/authorization that require it?
-   - A10 SSRF: is a user-supplied URL or file path passed to an HTTP client or file reader without allowlist validation?
+   - A01 Broken Access Control (IDOR): can a user access/modify another user's data by changing an ID?
+   - A02 Cryptographic Failures: are secrets, tokens, or passwords logged or stored in plaintext?
+   - A03 Injection: is user input concatenated (not parameterized) into SQL, OS commands, or logs?
+   - A07 Auth Failures: are there endpoints reachable without authentication that require it?
+   - A10 SSRF: is a user-supplied URL passed to an HTTP client without allowlist validation?
    Any confirmed vulnerability is automatically Critical (confidence=100).
-4. **Contract compliance** — frontend API calls must exactly match $CONTRACTS_DIR/openapi.yaml
-   (method, path, request body, response handling). Any mismatch is Critical.
-5. **Requirements coverage** — cross-check $REQ_DIR/confirmed.md.
-   Flag any acceptance criterion that the code does NOT satisfy.
-6. **Edge cases** — empty input, max values, concurrent access, network failure paths.
-7. **SOLID principles** — for each modified class or module:
-   - S (Single Responsibility): does this class/function do more than one distinct thing?
-   - O (Open/Closed): was existing core behavior modified when a new subtype/strategy/extension could have been added instead?
-   - D (Dependency Inversion): are high-level modules directly instantiating or importing concrete low-level classes?
-   Violations are IMPORTANT issues (confidence ≥ 80 if clearly demonstrated).
+4. **Edge cases** — empty input, max values, concurrent access, network failure paths.
+5. **SOLID principles** — for each modified class or module:
+   - S: does this class/function do more than one distinct thing?
+   - O: was existing core behavior modified when an extension could have been added instead?
+   - D: are high-level modules directly instantiating concrete low-level classes?
+   Violations are IMPORTANT (confidence ≥ 80 if clearly demonstrated).
 
 Confidence scoring (report ONLY issues scoring ≥ 80):
   100 — Confirmed bug/violation, will definitely cause problems in practice
-   80 — Very likely real issue, evidence is strong, not a false positive
-  <80 — Do NOT report
+   80 — Very likely real issue, evidence is strong
 
 Output format:
 CRITICAL (confidence ≥ 80, blocks delivery):
@@ -176,7 +306,7 @@ CRITICAL (confidence ≥ 80, blocks delivery):
 IMPORTANT (confidence ≥ 80, degrades quality):
 - [file:line] confidence=XX | <description> | Fix: <concrete suggestion>
 
-If no issues ≥ 80 confidence: output "REVIEW PASSED — no high-confidence issues found."
+If no issues ≥ 80: output "CORRECTNESS REVIEW PASSED"
 
 ---TASK---
 id: review_simplicity_wave<N>
@@ -200,15 +330,15 @@ Output format:
 SIMPLICITY ISSUES (confidence ≥ 80):
 - [file:line] confidence=XX | <description> | Fix: <concrete suggestion>
 
-If no issues ≥ 80: output "SIMPLICITY PASSED."
+If no issues ≥ 80: output "SIMPLICITY PASSED"
 EOF
 ```
 
 ## Step 5 — Handle review results
 
-Collect all CRITICAL, IMPORTANT, and SIMPLICITY issues from both reviewers.
+Collect all issues from Stage 1 (spec violations) and Stage 2 (CRITICAL, IMPORTANT, SIMPLICITY).
 
-### If CRITICAL issues exist:
+### If SPEC VIOLATIONS or CRITICAL issues exist:
 
 Use `AskUserQuestion`:
 ```
