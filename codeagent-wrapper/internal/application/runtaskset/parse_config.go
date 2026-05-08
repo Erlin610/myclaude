@@ -1,14 +1,17 @@
-package executor
+package runtaskset
 
 import (
 	"bytes"
 	"fmt"
 	"strings"
 
+	appruntask "codeagent-wrapper/internal/application/runtask"
 	config "codeagent-wrapper/internal/config"
 )
 
-func ParseParallelConfig(data []byte) (*ParallelConfig, error) {
+const defaultWorkdir = "."
+
+func ParseConfig(data []byte) (*ParallelConfig, error) {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 {
 		return nil, fmt.Errorf("parallel config is empty")
@@ -34,7 +37,7 @@ func ParseParallelConfig(data []byte) (*ParallelConfig, error) {
 		meta := strings.TrimSpace(parts[0])
 		content := strings.TrimSpace(parts[1])
 
-		task := TaskSpec{WorkDir: defaultWorkdir}
+		task := appruntask.Spec{WorkDir: defaultWorkdir}
 		agentSpecified := false
 		for _, line := range strings.Split(meta, "\n") {
 			line = strings.TrimSpace(line)
@@ -52,7 +55,6 @@ func ParseParallelConfig(data []byte) (*ParallelConfig, error) {
 			case "id":
 				task.ID = value
 			case "workdir":
-				// Validate workdir: "-" is not a valid directory
 				if value == "-" {
 					return nil, fmt.Errorf("task block #%d has invalid workdir: '-' is not a valid directory path", taskIndex)
 				}

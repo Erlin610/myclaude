@@ -1,7 +1,7 @@
 package main
 
-import app "codeagent-wrapper/internal/app"
+import "codeagent-wrapper/internal/bootstrap"
 
 func main() {
-	app.Run()
+	bootstrap.Main()
 }

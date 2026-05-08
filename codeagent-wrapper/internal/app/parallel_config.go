@@ -1,9 +1,9 @@
 package wrapper
 
 import (
-	executor "codeagent-wrapper/internal/executor"
+	runtaskset "codeagent-wrapper/internal/application/runtaskset"
 )
 
-func parseParallelConfig(data []byte) (*ParallelConfig, error) {
-	return executor.ParseParallelConfig(data)
+func parseParallelConfig(data []byte) (*runtaskset.ParallelConfig, error) {
+	return runtaskset.ParseConfig(data)
 }

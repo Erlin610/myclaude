@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	runtaskset "codeagent-wrapper/internal/application/runtaskset"
 )
 
 // setTestHome overrides the home directory for both Unix (HOME) and Windows (USERPROFILE).
@@ -92,9 +94,9 @@ Do something.
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := ParseParallelConfig([]byte(tt.input))
+			cfg, err := runtaskset.ParseConfig([]byte(tt.input))
 			if err != nil {
-				t.Fatalf("ParseParallelConfig error: %v", err)
+				t.Fatalf("ParseConfig error: %v", err)
 			}
 			got := cfg.Tasks[tt.taskIdx].Skills
 			if len(got) != len(tt.expectedSkills) {
@@ -163,7 +165,9 @@ func TestStripYAMLFrontmatter(t *testing.T) {
 
 func TestDetectProjectSkills_GoProject(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module test"), 0644)
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module test"), 0644); err != nil {
+		t.Fatalf("WriteFile(go.mod): %v", err)
+	}
 
 	skills := DetectProjectSkills(tmpDir)
 	// Result depends on whether golang-base-practices is installed locally
@@ -180,8 +184,12 @@ func TestDetectProjectSkills_NoFingerprints(t *testing.T) {
 
 func TestDetectProjectSkills_FullStack(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module test"), 0644)
-	os.WriteFile(filepath.Join(tmpDir, "package.json"), []byte(`{"name":"test"}`), 0644)
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module test"), 0644); err != nil {
+		t.Fatalf("WriteFile(go.mod): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "package.json"), []byte(`{"name":"test"}`), 0644); err != nil {
+		t.Fatalf("WriteFile(package.json): %v", err)
+	}
 
 	skills := DetectProjectSkills(tmpDir)
 	t.Logf("detected skills for fullstack project: %v", skills)
@@ -263,8 +271,12 @@ func TestResolveSkillContent_MultipleSkills(t *testing.T) {
 	home := t.TempDir()
 	for _, name := range []string{"skill-a", "skill-b"} {
 		skillDir := filepath.Join(home, ".claude", "skills", name)
-		os.MkdirAll(skillDir, 0755)
-		os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("# "+name+"\nContent."), 0644)
+		if err := os.MkdirAll(skillDir, 0755); err != nil {
+			t.Fatalf("MkdirAll(%q): %v", skillDir, err)
+		}
+		if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("# "+name+"\nContent."), 0644); err != nil {
+			t.Fatalf("WriteFile(SKILL.md): %v", err)
+		}
 	}
 	setTestHome(t, home)
 

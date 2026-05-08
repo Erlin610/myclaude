@@ -24,8 +24,8 @@ import (
 	"codeagent-wrapper/internal/worktree"
 )
 
-const postMessageTerminateDelay = 1 * time.Second
 const forceKillWaitTimeout = 5 * time.Second
+const defaultProgressHeartbeatInterval = 15 * time.Second
 
 // Defaults duplicated from wrapper for module decoupling.
 const (
@@ -39,10 +39,8 @@ const (
 
 const (
 	// stdout close reasons
-	stdoutCloseReasonWait  = "wait-done"
-	stdoutCloseReasonDrain = "drain-timeout"
-	stdoutCloseReasonCtx   = "context-cancel"
-	stdoutDrainTimeout     = 500 * time.Millisecond
+	stdoutCloseReasonWait = "wait-done"
+	stdoutCloseReasonCtx  = "context-cancel"
 )
 
 // Hook points (tests can override inside this package).
@@ -54,9 +52,13 @@ var (
 )
 
 var forceKillDelay atomic.Int32
+var progressHeartbeatInterval atomic.Int64
+var progressOutput = func() io.Writer { return os.Stdout }
+var progressOutputMu sync.Mutex
 
 func init() {
 	forceKillDelay.Store(5) // seconds - default value
+	progressHeartbeatInterval.Store(int64(defaultProgressHeartbeatInterval))
 }
 
 type (
@@ -86,6 +88,38 @@ func logInfo(msg string) { ilogger.LogInfo(msg) }
 func logWarn(msg string) { ilogger.LogWarn(msg) }
 
 func logError(msg string) { ilogger.LogError(msg) }
+
+func progressInterval() time.Duration {
+	return time.Duration(progressHeartbeatInterval.Load())
+}
+
+func emitProgress(silent bool, status string, taskSpec TaskSpec, commandName, logPath string, elapsed time.Duration) {
+	if silent || progressOutput == nil || strings.TrimSpace(status) == "" {
+		return
+	}
+	w := progressOutput()
+	if w == nil {
+		return
+	}
+
+	fields := []string{"[codeagent-progress]", "status=" + status}
+	if taskID := strings.TrimSpace(taskSpec.ID); taskID != "" {
+		fields = append(fields, "task_id="+sanitizeOutput(taskID))
+	}
+	if backend := strings.TrimSpace(commandName); backend != "" {
+		fields = append(fields, "backend="+sanitizeOutput(backend))
+	}
+	if logPath = strings.TrimSpace(logPath); logPath != "" {
+		fields = append(fields, "log="+logPath)
+	}
+	if elapsed > 0 {
+		fields = append(fields, "elapsed="+elapsed.Round(time.Second).String())
+	}
+
+	progressOutputMu.Lock()
+	defer progressOutputMu.Unlock()
+	fmt.Fprintln(w, strings.Join(fields, " "))
+}
 
 func logConcurrencyPlanning(limit, total int) { ilogger.LogConcurrencyPlanning(limit, total) }
 
@@ -397,78 +431,13 @@ func DefaultRunCodexTaskFn(task TaskSpec, timeout int) TaskResult {
 	return RunCodexTaskWithContext(parentCtx, task, backend, "", nil, nil, false, true, timeout)
 }
 
-func TopologicalSort(tasks []TaskSpec) ([][]TaskSpec, error) {
-	idToTask := make(map[string]TaskSpec, len(tasks))
-	indegree := make(map[string]int, len(tasks))
-	adj := make(map[string][]string, len(tasks))
-
-	for _, task := range tasks {
-		idToTask[task.ID] = task
-		indegree[task.ID] = 0
-	}
-
-	for _, task := range tasks {
-		for _, dep := range task.Dependencies {
-			if _, ok := idToTask[dep]; !ok {
-				return nil, fmt.Errorf("dependency %q not found for task %q", dep, task.ID)
-			}
-			indegree[task.ID]++
-			adj[dep] = append(adj[dep], task.ID)
-		}
-	}
-
-	queue := make([]string, 0, len(tasks))
-	for _, task := range tasks {
-		if indegree[task.ID] == 0 {
-			queue = append(queue, task.ID)
-		}
-	}
-
-	layers := make([][]TaskSpec, 0)
-	processed := 0
-
-	for len(queue) > 0 {
-		current := queue
-		queue = nil
-		layer := make([]TaskSpec, len(current))
-		for i, id := range current {
-			layer[i] = idToTask[id]
-			processed++
-		}
-		layers = append(layers, layer)
-
-		next := make([]string, 0)
-		for _, id := range current {
-			for _, neighbor := range adj[id] {
-				indegree[neighbor]--
-				if indegree[neighbor] == 0 {
-					next = append(next, neighbor)
-				}
-			}
-		}
-		queue = append(queue, next...)
-	}
-
-	if processed != len(tasks) {
-		cycleIDs := make([]string, 0)
-		for id, deg := range indegree {
-			if deg > 0 {
-				cycleIDs = append(cycleIDs, id)
-			}
-		}
-		sort.Strings(cycleIDs)
-		return nil, fmt.Errorf("cycle detected involving tasks: %s", strings.Join(cycleIDs, ","))
-	}
-
-	return layers, nil
-}
-
 func ExecuteConcurrent(layers [][]TaskSpec, timeout int, runTask func(TaskSpec, int) TaskResult) []TaskResult {
 	maxWorkers := config.ResolveMaxParallelWorkers()
 	return ExecuteConcurrentWithContext(context.Background(), layers, timeout, maxWorkers, runTask)
 }
 
 func ExecuteConcurrentWithContext(parentCtx context.Context, layers [][]TaskSpec, timeout int, maxWorkers int, runTask func(TaskSpec, int) TaskResult) []TaskResult {
+	_ = timeout
 	if runTask == nil {
 		runTask = DefaultRunCodexTaskFn
 	}
@@ -572,7 +541,7 @@ func ExecuteConcurrentWithContext(parentCtx context.Context, layers [][]TaskSpec
 				handle := taskLoggerHandle{}
 				defer func() {
 					if r := recover(); r != nil {
-						resultsCh <- TaskResult{TaskID: ts.ID, ExitCode: 1, Error: fmt.Sprintf("panic: %v", r), LogPath: taskLogPath, sharedLog: handle.shared}
+						resultsCh <- TaskResult{TaskID: ts.ID, ExitCode: 1, Error: fmt.Sprintf("panic: %v", r), LogPath: taskLogPath, SharedLog: handle.shared}
 					}
 				}()
 
@@ -611,7 +580,7 @@ func ExecuteConcurrentWithContext(parentCtx context.Context, layers [][]TaskSpec
 				}
 				// 只有当最终的 LogPath 确实是共享 logger 的路径时才标记为 shared
 				if handle.shared && handle.logger != nil && res.LogPath == handle.logger.Path() {
-					res.sharedLog = true
+					res.SharedLog = true
 				}
 				resultsCh <- res
 			}(task)
@@ -632,13 +601,7 @@ func ExecuteConcurrentWithContext(parentCtx context.Context, layers [][]TaskSpec
 }
 
 func cancelledTaskResult(taskID string, ctx context.Context) TaskResult {
-	exitCode := 130
-	msg := "execution cancelled"
-	if ctx != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		exitCode = 124
-		msg = "execution timeout"
-	}
-	return TaskResult{TaskID: taskID, ExitCode: exitCode, Error: msg}
+	return TaskResult{TaskID: taskID, ExitCode: 130, Error: "execution cancelled"}
 }
 
 func shouldSkipTask(task TaskSpec, failed map[string]TaskResult) (bool, string) {
@@ -852,7 +815,7 @@ func GenerateFinalOutputWithMode(results []TaskResult, summaryOnly bool) string 
 			}
 			if res.LogPath != "" {
 				logPath := sanitizeOutput(res.LogPath)
-				if res.sharedLog {
+				if res.SharedLog {
 					sb.WriteString(fmt.Sprintf("Log: %s (shared)\n", logPath))
 				} else {
 					sb.WriteString(fmt.Sprintf("Log: %s\n", logPath))
@@ -921,6 +884,7 @@ func buildCodexArgs(cfg *Config, targetArg string) []string {
 }
 
 func RunCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, backend Backend, defaultCommandName string, defaultArgsBuilder func(*Config, string) []string, customArgs []string, useCustomArgs bool, silent bool, timeoutSec int) TaskResult {
+	_ = timeoutSec
 	taskCtx := taskSpec.Context
 	if parentCtx == nil {
 		parentCtx = taskCtx
@@ -1109,8 +1073,6 @@ func RunCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, backe
 	}
 
 	ctx := parentCtx
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
-	defer cancel()
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -1237,30 +1199,6 @@ func RunCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, backe
 		stdoutReader = io.TeeReader(stdout, stdoutLogger)
 	}
 
-	// Start parse goroutine BEFORE starting the command to avoid race condition
-	// where fast-completing commands close stdout before parser starts reading
-	messageSeen := make(chan struct{}, 1)
-	completeSeen := make(chan struct{}, 1)
-	parseCh := make(chan parseResult, 1)
-	go func() {
-		msg, tid := parseJSONStreamInternal(stdoutReader, logWarnFn, logInfoFn, func() {
-			select {
-			case messageSeen <- struct{}{}:
-			default:
-			}
-		}, func() {
-			select {
-			case completeSeen <- struct{}{}:
-			default:
-			}
-		})
-		select {
-		case completeSeen <- struct{}{}:
-		default:
-		}
-		parseCh <- parseResult{message: msg, threadID: tid}
-	}()
-
 	logInfoFn(fmt.Sprintf("Starting %s with args: %s %s...", commandName, commandName, strings.Join(codexArgs[:min(5, len(codexArgs))], " ")))
 
 	if err := cmd.Start(); err != nil {
@@ -1308,16 +1246,41 @@ func RunCodexTaskWithContext(parentCtx context.Context, taskSpec TaskSpec, backe
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
 
+	emitProgress(silent, "started", taskSpec, commandName, result.LogPath, 0)
+
 	var (
-		waitErr              error
-		forceKillTimer       *forceKillTimer
-		ctxCancelled         bool
-		messageTimer         *time.Timer
-		messageTimerCh       <-chan time.Time
-		forcedAfterComplete  bool
-		terminated           bool
-		messageSeenObserved  bool
-		completeSeenObserved bool
+		firstMessageSeen atomic.Bool
+		completeSeen     atomic.Bool
+	)
+	// Start parse goroutine BEFORE entering the wait loop so progress callbacks
+	// can surface backend activity while the process is still running.
+	parseCh := make(chan parseResult, 1)
+	go func() {
+		msg, tid := parseJSONStreamInternal(stdoutReader, logWarnFn, logInfoFn, func() {
+			if firstMessageSeen.CompareAndSwap(false, true) {
+				emitProgress(silent, "streaming", taskSpec, commandName, result.LogPath, 0)
+			}
+		}, func() {
+			if completeSeen.CompareAndSwap(false, true) {
+				emitProgress(silent, "backend-complete", taskSpec, commandName, result.LogPath, 0)
+			}
+		})
+		parseCh <- parseResult{message: msg, threadID: tid}
+	}()
+
+	var heartbeat <-chan time.Time
+	startedAt := time.Now()
+	if interval := progressInterval(); interval > 0 {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		heartbeat = ticker.C
+	}
+
+	var (
+		waitErr        error
+		forceKillTimer *forceKillTimer
+		ctxCancelled   bool
+		terminated     bool
 	)
 
 waitLoop:
@@ -1326,6 +1289,8 @@ waitLoop:
 		case err := <-waitCh:
 			waitErr = err
 			break waitLoop
+		case <-heartbeat:
+			emitProgress(silent, "running", taskSpec, commandName, result.LogPath, time.Since(startedAt))
 		case <-ctx.Done():
 			ctxCancelled = true
 			logErrorFn(cancelReason(commandName, ctx))
@@ -1346,48 +1311,6 @@ waitLoop:
 					}
 				}
 			}
-		case <-messageTimerCh:
-			forcedAfterComplete = true
-			messageTimerCh = nil
-			if !terminated {
-				logWarnFn(fmt.Sprintf("%s output parsed; terminating lingering backend", commandName))
-				if timer := terminateCommandFn(cmd); timer != nil {
-					forceKillTimer = timer
-					terminated = true
-				}
-			}
-			// Close pipes to unblock stream readers, then wait for process exit.
-			closeWithReason(stdout, "terminate")
-			closeWithReason(stderr, "terminate")
-			for {
-				select {
-				case err := <-waitCh:
-					waitErr = err
-					break waitLoop
-				case <-time.After(forceKillWaitTimeout):
-					if proc := cmd.Process(); proc != nil {
-						_ = proc.Kill()
-					}
-				}
-			}
-		case <-completeSeen:
-			completeSeenObserved = true
-			if messageTimer != nil {
-				continue
-			}
-			messageTimer = time.NewTimer(postMessageTerminateDelay)
-			messageTimerCh = messageTimer.C
-		case <-messageSeen:
-			messageSeenObserved = true
-		}
-	}
-
-	if messageTimer != nil {
-		if !messageTimer.Stop() {
-			select {
-			case <-messageTimer.C:
-			default:
-			}
 		}
 	}
 
@@ -1395,32 +1318,12 @@ waitLoop:
 		forceKillTimer.Stop()
 	}
 
-	var parsed parseResult
-	switch {
-	case ctxCancelled:
+	if ctxCancelled {
 		closeWithReason(stdout, stdoutCloseReasonCtx)
-		parsed = <-parseCh
-	case messageSeenObserved || completeSeenObserved:
+	} else {
 		closeWithReason(stdout, stdoutCloseReasonWait)
-		parsed = <-parseCh
-	default:
-		drainTimer := time.NewTimer(stdoutDrainTimeout)
-		defer drainTimer.Stop()
-
-		select {
-		case parsed = <-parseCh:
-			closeWithReason(stdout, stdoutCloseReasonWait)
-		case <-messageSeen:
-			closeWithReason(stdout, stdoutCloseReasonWait)
-			parsed = <-parseCh
-		case <-completeSeen:
-			closeWithReason(stdout, stdoutCloseReasonWait)
-			parsed = <-parseCh
-		case <-drainTimer.C:
-			closeWithReason(stdout, stdoutCloseReasonDrain)
-			parsed = <-parseCh
-		}
 	}
+	parsed := <-parseCh
 
 	closeWithReason(stderr, stdoutCloseReasonWait)
 	// Wait for stderr drain so stderrBuf / stderrLogger are not accessed concurrently.
@@ -1429,41 +1332,35 @@ waitLoop:
 	<-stderrDone
 
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		if errors.Is(ctxErr, context.DeadlineExceeded) {
-			result.ExitCode = 124
-			result.Error = attachStderr(fmt.Sprintf("%s execution timeout", commandName))
-			return result
-		}
 		result.ExitCode = 130
 		result.Error = attachStderr("execution cancelled")
+		emitProgress(silent, "cancelled", taskSpec, commandName, result.LogPath, time.Since(startedAt))
 		return result
 	}
 
 	if waitErr != nil {
-		if forcedAfterComplete && parsed.message != "" {
-			logWarnFn(fmt.Sprintf("%s terminated after delivering output", commandName))
-		} else {
-			if exitErr, ok := waitErr.(*exec.ExitError); ok {
-				code := exitErr.ExitCode()
-				logErrorFn(fmt.Sprintf("%s exited with status %d", commandName, code))
-				result.ExitCode = code
-				result.Error = attachStderr(fmt.Sprintf("%s exited with status %d", commandName, code))
-				// Preserve parsed output when the backend exits non-zero (e.g. API error with stream-json output).
-				result.Message = parsed.message
-				result.SessionID = parsed.threadID
-				if stdoutLogger != nil {
-					stdoutLogger.Flush()
-				}
-				if stderrLogger != nil {
-					stderrLogger.Flush()
-				}
-				return result
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
+			code := exitErr.ExitCode()
+			logErrorFn(fmt.Sprintf("%s exited with status %d", commandName, code))
+			result.ExitCode = code
+			result.Error = attachStderr(fmt.Sprintf("%s exited with status %d", commandName, code))
+			// Preserve parsed output when the backend exits non-zero (e.g. API error with stream-json output).
+			result.Message = parsed.message
+			result.SessionID = parsed.threadID
+			if stdoutLogger != nil {
+				stdoutLogger.Flush()
 			}
-			logErrorFn(commandName + " error: " + waitErr.Error())
-			result.ExitCode = 1
-			result.Error = attachStderr(commandName + " error: " + waitErr.Error())
+			if stderrLogger != nil {
+				stderrLogger.Flush()
+			}
+			emitProgress(silent, "failed", taskSpec, commandName, result.LogPath, time.Since(startedAt))
 			return result
 		}
+		logErrorFn(commandName + " error: " + waitErr.Error())
+		result.ExitCode = 1
+		result.Error = attachStderr(commandName + " error: " + waitErr.Error())
+		emitProgress(silent, "failed", taskSpec, commandName, result.LogPath, time.Since(startedAt))
+		return result
 	}
 
 	message := parsed.message
@@ -1472,6 +1369,7 @@ waitLoop:
 		logErrorFn(fmt.Sprintf("%s completed without agent_message output", commandName))
 		result.ExitCode = 1
 		result.Error = attachStderr(fmt.Sprintf("%s completed without agent_message output", commandName))
+		emitProgress(silent, "failed", taskSpec, commandName, result.LogPath, time.Since(startedAt))
 		return result
 	}
 
@@ -1488,6 +1386,7 @@ waitLoop:
 	if result.LogPath == "" && injectedLogger != nil {
 		result.LogPath = injectedLogger.Path()
 	}
+	emitProgress(silent, "completed", taskSpec, commandName, result.LogPath, time.Since(startedAt))
 
 	return result
 }
@@ -1515,10 +1414,6 @@ func cancelReason(commandName string, ctx context.Context) string {
 
 	if commandName == "" {
 		commandName = defaultBackendName
-	}
-
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return fmt.Sprintf("%s execution timeout", commandName)
 	}
 
 	return fmt.Sprintf("Execution cancelled, terminating %s process", commandName)

@@ -35,8 +35,6 @@ type ModelsConfig struct {
 	Backends       map[string]BackendConfig    `json:"backends,omitempty"`
 }
 
-var defaultModelsConfig = ModelsConfig{}
-
 const modelsConfigTildePath = "~/.codeagent/models.json"
 
 const modelsConfigExample = `{

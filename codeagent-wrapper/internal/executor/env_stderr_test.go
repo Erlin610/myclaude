@@ -102,7 +102,12 @@ func TestEnvInjection_LogsToStderrAndMasksKey(t *testing.T) {
 	// Act: force an early return right after env injection by making StderrPipe fail.
 	_ = RunCodexTaskWithContext(
 		context.Background(),
-		TaskSpec{Task: "hi", WorkDir: ".", Backend: "claude", Agent: "explore"},
+		TaskSpec{
+			Task:    "hi",
+			WorkDir: ".",
+			Backend: "claude",
+			Agent:   "explore",
+		},
 		nil,
 		"claude",
 		nil,
