@@ -236,6 +236,66 @@ Write these as falsifiable statements, not vague prose.
 
 ---
 
+#### PHASE B2 — Display Data Traceability（显示数据追溯）
+
+**Purpose**: Every piece of text displayed on a page must have a known data origin. This phase
+forces systematic tracing of display data → API response fields BEFORE any API is designed.
+Without this, the contract will miss fields like `className`, `groupPlanName` etc. that are
+displayed but never entered as form inputs — a systemic gap in design-first API generation.
+
+**The fundamental rule**: 如果一个页面展示了某条数据，这条数据必须出现在某个 API 响应中（或前端可计算得到）。设计稿上每个不可编辑的文字、标签、名称，都必须追溯来源。
+
+**Step 1 — Inventory visible data per page**
+
+For each page/screen identified from the Lanhu design:
+
+| Column | Question |
+|--------|----------|
+| **Page/Component** | Which screen or modal? |
+| **Display Element** | What exact text/data is shown? (e.g. "班级：三年二班") |
+| **Element Type** | `text` (read-only display) / `selector-label` (dropdown current value) / `selector-option` (dropdown list item) / `status-badge` / `computed` (derived from other data) |
+| **Data Origin** | Where does this value come from? Choose one: `API response field` / `API list endpoint` / `client computed` / `static constant` / `URL parameter` / `user input (form)` |
+| **Required API Field** | If origin is API, what exact field name? (e.g. `className: string`) |
+| **Missing from current analysis?** | YES / NO — is this field NOT yet listed in Phase B data truths? |
+
+**Critical patterns to detect:**
+
+1. **Select/Dropdown display**: A dropdown shows "三年二班" but stores `classId=123`.
+   - The selected value DISPLAY comes from a list API response
+   - The detail API (GET /detail/{id}) MUST return `className` alongside `classId`
+   - If the detail page only returns `classId`, the frontend must make a second API call to resolve the name → bad design
+
+2. **Related entity names**: "创建人：张三", "所属部门：研发部"
+   - These are NOT form inputs, they're display-only
+   - The detail API MUST include `creatorName`, `departmentName` alongside `creatorId`, `departmentId`
+
+3. **Enum/Status display**: "状态：已通过" shown as a badge
+   - If the API returns `status: "APPROVED"`, the frontend needs a mapping table
+   - Is this mapping static (frontend constant) or dynamic (API returns `statusText: "已通过"`)?
+   - Decision affects API contract
+
+4. **Nested entity summaries**: A card showing "共 12 名学员" or "最后更新：2024-01-15"
+   - The count and timestamp must be fields in the API response
+   - If the design shows them, the API must provide them
+
+**Step 2 — Produce Display Data Matrix**
+
+For every display element whose origin is API:
+- Add its required field to the data truths from Phase B
+- Mark any field that Phase B missed as a **DATA GAP**
+
+**Step 3 — Cross-check against form fields**
+
+The form POST/PUT body should mirror the GET response structure for the same entity.
+If GET returns `{ classId, className, groupPlanId, groupPlanName }`, then:
+- POST body needs at least `{ classId, groupPlanId }` (IDs to save)
+- GET response must return BOTH ids AND names for all referenced entities
+
+**Output**: A section in `raw.md` titled "Display Data Traceability" with the complete matrix.
+Each DATA GAP is escalated as a BLOCKING conflict in Phase D.
+
+---
+
 #### PHASE C — Rebuild Specification from Truths
 
 **IMPORTANT — Scan backend conventions FIRST (backend/full mode only).**
@@ -379,6 +439,24 @@ Generated: <timestamp>  |  Workspace: <workspace_id>  |  Mode: <mode>
 **State machine**: <entity → states → transitions>
 **Permissions**: <who can do what>
 **Business invariants**: <always-true rules>
+
+### Display Data Traceability (Phase B2 output)
+
+> Every piece of display text on every page must have a known data origin.
+> Any field marked **DATA GAP** in this matrix becomes a BLOCKING conflict in Phase D.
+
+| Page | Display Element | Element Type | Data Origin | Required API Field | Phase B Covered? |
+|------|----------------|--------------|-------------|--------------------|------------------|
+| 详情页 | 班级名称: "三年二班" | text | API response | `className: string` | ❌ DATA GAP |
+| 详情页 | 班级选择器当前值 | selector-label | API list endpoint | `className` in detail + `GET /classes` list | ❌ DATA GAP |
+| 详情页 | 分组方案: "A组" | text | API response | `groupPlanName: string` | ❌ DATA GAP |
+| 详情页 | 状态: "已通过" | status-badge | API response | `statusText: string` (or static mapping) | — |
+
+**Data Origin Resolution Rules:**
+- `API response field`: field must appear in the detail endpoint's 200 response schema
+- `API list endpoint`: used by selectors/dropdowns — both the list endpoint AND the detail endpoint must include this field
+- `client computed`: derived from other fields — document the derivation formula
+- `static constant`: hardcoded on frontend — no API change needed
 
 ### Backend URL Conventions (Phase C scan output)
 **URL prefix**: <e.g. /api>

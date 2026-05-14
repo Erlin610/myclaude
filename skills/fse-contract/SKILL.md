@@ -56,6 +56,46 @@ Return as a structured list.
 EOF
 ```
 
+## Step 2.5 — Display Data Completeness Verification
+
+Before generating the contract, verify that every display data requirement from the requirements
+phase has a corresponding field in the API surface. This prevents the systemic gap where API
+responses only include IDs but the UI displays names.
+
+Read the Display Data Traceability matrix from `$REQ_DIR/raw.md` (produced by Phase B2 of
+fse-requirements). For each row where:
+
+| Condition | Action |
+|-----------|--------|
+| **Data Origin** = `API response field` or `API list endpoint` | Field MUST appear in the API surface from Step 2 |
+| **Phase B Covered?** = `❌ DATA GAP` | This is a blocking gap — the contract cannot be generated without resolving it |
+
+If DATA GAPs exist, use `AskUserQuestion`:
+```
+⚠️ 发现显示数据缺口 — API 合约无法生成
+
+以下字段在 UI 设计中可见，但在 API 接口草稿中缺失：
+
+| 页面 | 展示元素 | 缺失字段 |
+|------|---------|----------|
+| 详情页 | 班级名称: "三年二班" | className |
+| 详情页 | 分组方案: "A组" | groupPlanName |
+
+这些字段的 UI 上展示了名称，但当前 API 草稿只返回了 ID。
+前端无法从 ID 渲染出名称。
+
+请选择：
+```
+Options:
+- `补充缺失字段到合约（推荐）` — 所有 DATA GAP 字段加入 response schema
+- `前端自行查询` — 记为技术债务，由前端发额外请求获取名称
+- `提供正确字段名` — 手动指定每个缺失字段的正确名称
+
+If user selects "补充缺失字段": write each missing field into the API surface before proceeding
+to Step 3. Format: `fieldName: type // displays <what> on <page>`
+
+Only proceed to Step 3 after all DATA GAPs are resolved.
+
 ## Step 3 — Generate OpenAPI contract
 
 ```bash
@@ -65,16 +105,20 @@ Generate a complete OpenAPI 3.0 YAML specification for this feature.
 Inputs:
 - API surface: $ANALYSIS_DIR/api-surface.md
 - Requirements: $REQ_DIR/confirmed.md
+- Display Data Traceability: $REQ_DIR/raw.md ("Display Data Traceability" section)
 - Backend conventions: <output from Step 2>
 
 Requirements for the spec:
 1. openapi: "3.0.3"
 2. Use $ref for reusable schemas (no inline duplication)
 3. Every endpoint must have: summary, operationId, request schema, response schemas (200 + error codes)
-4. Include authentication requirement on each protected endpoint
-5. Use existing backend error/pagination wrappers exactly as detected
-6. Include examples for each request and response
-7. IDEMPOTENCY MATRIX: For each POST/PUT/DELETE endpoint, explicitly specify:
+4. **Response schemas MUST include display fields.** For every entity reference field in the response
+   (e.g. `classId: integer`), verify the Display Data Traceability matrix — if the page displays the
+   corresponding name, add the name field to the response (e.g. `className: string`). This is non-negotiable.
+5. Include authentication requirement on each protected endpoint
+6. Use existing backend error/pagination wrappers exactly as detected
+7. Include examples for each request and response
+8. IDEMPOTENCY MATRIX: For each POST/PUT/DELETE endpoint, explicitly specify:
    - Is this operation idempotent? (calling it twice produces the same result?)
    - If YES: document the mechanism (unique DB constraint / conditional update / idempotency-key header)
      and add `x-idempotent: true` to the endpoint's extension fields.

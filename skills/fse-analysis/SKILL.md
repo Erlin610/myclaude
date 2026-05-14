@@ -79,10 +79,29 @@ Produce:
 3. <If frontend> API CALLS REQUIRED
    Every backend endpoint this frontend will consume.
    Format: METHOD /path — what data is sent — what is expected back
+   
+   **CRITICAL — Response Field Completeness Check:**
+   Cross-reference the "Display Data Traceability" matrix in $REQ_DIR/raw.md.
+   For every display data element whose origin is "API response field":
+     - Verify the corresponding API endpoint's response schema includes that field
+     - If GET /detail returns { classId } but the page displays "班级名称", flag as RESPONSE_GAP
+     - For every selector-label: the detail response must include BOTH xxxId AND xxxName
+     - For every text display: the detail response must include the exact field shown
+   
+   At the bottom of this section, add a RESPONSE COMPLETENESS table:
+   | API Endpoint | Display Element | Required Field | In Spec? |
+   | GET /detail/{id} | 班级名称 | className: string | YES/NO |
+   
    Flag any endpoint not yet defined in the API surface.
+   Flag any endpoint whose response is MISSING fields needed for display.
 
 4. <If backend> NEW ENDPOINTS
    METHOD /path — request schema — response schema — auth required — FR it satisfies
+   
+   **Response schema MUST include display fields.** For every entity reference (e.g. classId),
+   the response schema MUST also include the corresponding display name (e.g. className).
+   Refer to the Display Data Traceability matrix in $REQ_DIR/raw.md — any DATA GAP flagged
+   there must be resolved in the response schema here.
 
 5. <If backend> DATABASE CHANGES
    New tables, columns, indexes. Include DDL SQL for each.
