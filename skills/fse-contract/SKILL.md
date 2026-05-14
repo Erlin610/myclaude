@@ -56,7 +56,7 @@ Return as a structured list.
 EOF
 ```
 
-## Step 2.5 — Display Data Completeness Verification
+## Step 3 — Display Data Completeness Verification
 
 Before generating the contract, verify that every display data requirement from the requirements
 phase has a corresponding field in the API surface. This prevents the systemic gap where API
@@ -92,11 +92,11 @@ Options:
 - `提供正确字段名` — 手动指定每个缺失字段的正确名称
 
 If user selects "补充缺失字段": write each missing field into the API surface before proceeding
-to Step 3. Format: `fieldName: type // displays <what> on <page>`
+to Step 4. Format: `fieldName: type // displays <what> on <page>`
 
-Only proceed to Step 3 after all DATA GAPs are resolved.
+Only proceed to Step 4 after all DATA GAPs are resolved.
 
-## Step 3 — Generate OpenAPI contract
+## Step 4 — Generate OpenAPI contract
 
 ```bash
 codeagent-wrapper --agent code-architect - . <<'EOF'
@@ -130,7 +130,7 @@ Write the complete YAML to $CONTRACTS_DIR/openapi.yaml
 EOF
 ```
 
-## Step 4 — Produce human-readable contract summary
+## Step 5 — Produce human-readable contract summary
 
 Write `$CONTRACTS_DIR/contract-summary.md` (i.e. .fullstack/contracts/<FEATURE_ID>/...):
 
@@ -171,7 +171,7 @@ Spec: $CONTRACTS_DIR/openapi.yaml
 - `ApiResponse<T>`: code, message, data
 ```
 
-## Step 5 — Confirmation Gate (GATE-3)
+## Step 6 — Confirmation Gate (GATE-3)
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
